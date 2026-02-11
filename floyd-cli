@@ -1,0 +1,13 @@
+#!/bin/bash
+# Floyd CLI - Shell wrapper for easy access
+# Usage: floyd-cli [server_url]
+#   server_url defaults to http://localhost:3001
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SERVER_URL="${1:-http://localhost:3001}"
+
+# Set server URL environment variable
+export FLOYD_SERVER_URL="$SERVER_URL"
+
+# Run the Node.js CLI client
+node "$SCRIPT_DIR/cli-client.js"

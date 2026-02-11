@@ -106,6 +106,37 @@ export default function App() {
     init();
   }, []);
 
+  // Auto-refresh: Poll for new messages from mobile/other clients
+  useEffect(() => {
+    if (status !== 'ready') return;
+
+    // Poll every 3 seconds for updates
+    const interval = setInterval(async () => {
+      if (!currentSession || isStreaming) return;
+
+      try {
+        // Fetch updated session data
+        const updatedSession = await api.getSession(currentSession.id);
+        const updatedSessions = await api.getSessions();
+
+        // Update messages if count changed (new message from mobile)
+        if (updatedSession.messages.length !== messages.length) {
+          setMessages(updatedSession.messages);
+        }
+
+        // Update sessions list (new sessions from mobile)
+        if (updatedSessions.length !== sessions.length) {
+          setSessions(updatedSessions);
+        }
+      } catch (err) {
+        // Silently fail on polling errors
+        console.error('Auto-refresh failed:', err);
+      }
+    }, 3000);
+
+    return () => clearInterval(interval);
+  }, [status, currentSession, isStreaming, messages.length, sessions.length, api]);
+
   // Handle send message
   const handleSend = async () => {
     if (!input.trim() || isStreaming || !currentSession) return;

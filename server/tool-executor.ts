@@ -139,6 +139,10 @@ export class ToolExecutor {
           return await this.cacheRetrieve(args);
         case 'cache_search':
           return await this.cacheSearch(args);
+
+        // Browser automation
+        case 'browser_screenshot':
+          return await this.browserScreenshot(args);
         
         default:
           return { success: false, error: `Unknown tool: ${toolName}` };
@@ -1061,12 +1065,88 @@ ${content}
     const { tier, query } = args as { tier: CacheTier; query: string };
     try {
       const results = await this.cacheManager.search(tier, query);
-      return { 
-        success: true, 
-        result: { 
-          count: results.length, 
-          results: results.map(r => ({ key: r.key, timestamp: r.timestamp })) 
-        } 
+      return {
+        success: true,
+        result: {
+          count: results.length,
+          results: results.map(r => ({ key: r.key, timestamp: r.timestamp }))
+        },
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  // === BROWSER SCREENSHOT ===
+  private async browserScreenshot(args: Record<string, unknown>): Promise<ToolResult> {
+    const { url, width, height, fullPage, selector } = args as {
+      url?: string;
+      width?: number;
+      height?: number;
+      fullPage?: boolean;
+      selector?: string;
+    };
+
+    try {
+      // Dynamically import Puppeteer only when needed
+      const puppeteer = await import('puppeteer');
+
+      const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      });
+
+      const page = await browser.newPage();
+
+      // Set viewport size
+      await page.setViewport({
+        width: width || 1280,
+        height: height || 720,
+      });
+
+      // Navigate to URL if provided
+      if (url) {
+        await page.goto(url, { waitUntil: 'networkidle0', timeout: 30000 });
+      }
+
+      let screenshot: string;
+
+      if (selector) {
+        // Screenshot specific element
+        const clipData = await page.evaluate(`(sel => {
+          const el = document.querySelector(sel);
+          if (!el) return null;
+          const rect = el.getBoundingClientRect();
+          return { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
+        })(${JSON.stringify(selector)})`) as { x: number; y: number; width: number; height: number } | null;
+
+        if (!clipData) {
+          await browser.close();
+          return { success: false, error: `Element not found: ${selector}` };
+        }
+
+        screenshot = await page.screenshot({
+          encoding: 'base64',
+          clip: clipData as { x: number; y: number; width: number; height: number },
+        }) as string;
+      } else {
+        // Screenshot full page or viewport
+        screenshot = await page.screenshot({
+          encoding: 'base64',
+          fullPage: fullPage || false,
+        }) as string;
+      }
+
+      await browser.close();
+
+      return {
+        success: true,
+        result: {
+          image: screenshot,
+          format: 'png',
+          encoding: 'base64',
+          mimeType: 'image/png',
+        },
       };
     } catch (err: any) {
       return { success: false, error: err.message };

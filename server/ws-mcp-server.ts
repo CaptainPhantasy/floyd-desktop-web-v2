@@ -58,7 +58,7 @@ export class WebSocketMCPServer {
         this.clients.delete(ws);
       });
 
-      ws.on('error', (error) => {
+      ws.on('error', (error: Error) => {
         console.error('[MCP-WS] WebSocket error:', error);
       });
 

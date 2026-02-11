@@ -1296,21 +1296,36 @@ app.post('/api/chat/stream', async (req, res) => {
             
             // Execute tool
             const result = await toolExecutor.execute(toolName, toolArgs);
-            
+
+            // Check if result contains an image (screenshot)
+            const isImageResult = result.success && result.result?.image;
+
             // Send tool result to client
-            res.write(`data: ${JSON.stringify({ 
-              type: 'tool_result', 
+            if (isImageResult) {
+              // Send image as a special event type
+              res.write(`data: ${JSON.stringify({
+                type: 'image',
+                tool: toolName,
+                id: toolCall.id,
+                data: result.result.image,
+                format: result.result.format || 'png',
+                mimeType: result.result.mimeType || 'image/png',
+              })}\n\n`);
+            }
+
+            res.write(`data: ${JSON.stringify({
+              type: 'tool_result',
               tool: toolName,
               id: toolCall.id,
-              result: result.success ? result.result : { error: result.error },
+              result: isImageResult ? { screenshot: 'Image captured and sent to client' } : (result.success ? result.result : { error: result.error }),
               success: result.success
             })}\n\n`);
-            
-            // Add tool result to messages
+
+            // Add tool result to messages - don't include image data to avoid context overflow
             apiMessages.push({
               role: 'tool',
               tool_call_id: toolCall.id,
-              content: JSON.stringify(result.success ? result.result : { error: result.error }),
+              content: JSON.stringify(isImageResult ? { screenshot: 'Image captured successfully' } : (result.success ? result.result : { error: result.error })),
             });
           }
         } else {
@@ -1362,20 +1377,35 @@ app.post('/api/chat/stream', async (req, res) => {
             
             // Execute tool
             const result = await toolExecutor.execute(block.name, block.input as Record<string, unknown>);
-            
+
+            // Check if result contains an image (screenshot)
+            const isImageResult = result.success && result.result?.image;
+
+            // Send image as a special event type
+            if (isImageResult) {
+              res.write(`data: ${JSON.stringify({
+                type: 'image',
+                tool: block.name,
+                id: block.id,
+                data: result.result.image,
+                format: result.result.format || 'png',
+                mimeType: result.result.mimeType || 'image/png',
+              })}\n\n`);
+            }
+
             // Send tool result to client
-            res.write(`data: ${JSON.stringify({ 
-              type: 'tool_result', 
+            res.write(`data: ${JSON.stringify({
+              type: 'tool_result',
               tool: block.name,
               id: block.id,
-              result: result.success ? result.result : { error: result.error },
+              result: isImageResult ? { screenshot: 'Image captured and sent to client' } : (result.success ? result.result : { error: result.error }),
               success: result.success
             })}\n\n`);
-            
+
             toolResults.push({
               type: 'tool_result',
               tool_use_id: block.id,
-              content: JSON.stringify(result.success ? result.result : { error: result.error }),
+              content: JSON.stringify(isImageResult ? { screenshot: 'Image captured successfully' } : (result.success ? result.result : { error: result.error })),
             });
           }
         }

@@ -646,4 +646,18 @@ export const BUILTIN_TOOLS = [
       properties: {},
     },
   },
+  {
+    name: 'browser_screenshot',
+    description: 'Take a screenshot of a web page using Puppeteer. Returns a base64-encoded PNG image.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        url: { type: 'string', description: 'URL to screenshot (required if no browser is connected)' },
+        width: { type: 'number', description: 'Viewport width in pixels (default 1280)' },
+        height: { type: 'number', description: 'Viewport height in pixels (default 720)' },
+        fullPage: { type: 'boolean', description: 'Capture full scrollable page (default false)' },
+        selector: { type: 'string', description: 'CSS selector to screenshot specific element' },
+      },
+    },
+  },
 ] as const;
