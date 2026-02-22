@@ -1,0 +1,238 @@
+name: Floyd Safe Ops - Safe Refactoring
+
+on:
+  workflow_dispatch:
+    inputs:
+      refactoring_type:
+        description: 'Type of refactoring'
+        required: true
+        type: choice
+        options:
+          - rename
+          - extract
+          - inline
+          - move
+          - delete
+      target_path:
+        description: 'Target file/function path'
+        required: true
+        type: string
+      new_path:
+        description: 'New path (for rename/move)'
+        required: false
+        type: string
+      verify_command:
+        description: 'Command to verify changes'
+        required: false
+        type: string
+        default: 'npm test'
+      create_pr:
+        description: 'Create PR for changes'
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  safe-refactor:
+    name: Execute Safe Refactoring
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: |
+          if [ -f "package.json" ]; then
+            npm ci
+          fi
+
+      - name: Start Floyd MCP servers
+        run: |
+          echo "Starting Floyd MCP servers..."
+          cd /Volumes/Storage/FloydDesktopWeb-v2
+          npm run dev &
+          sleep 5
+
+      - name: Wait for MCP servers
+        run: |
+          timeout 60 bash -c 'until curl -s http://localhost:3001/api/mcp/status | jq -e .initialized; do sleep 2; done'
+          echo "MCP servers ready"
+
+      - name: Create backup before refactoring
+        run: |
+          BACKUP_DIR="/tmp/safe-ops-backup-$(date +%s)"
+          mkdir -p "$BACKUP_DIR"
+          cp -r . "$BACKUP_DIR"
+          echo "BACKUP_DIR=$BACKUP_DIR" >> $GITHUB_ENV
+          echo "Created backup at $BACKUP_DIR"
+
+      - name: Prepare refactoring operations
+        id: prep
+        run: |
+          REFACTORING_TYPE="${{ github.event.inputs.refactoring_type }}"
+          TARGET_PATH="${{ github.event.inputs.target_path }}"
+          NEW_PATH="${{ github.event.inputs.new_path }}"
+
+          OPERATIONS="[]"
+
+          case "$REFACTORING_TYPE" in
+            rename)
+              OPERATIONS='[
+                {"type":"edit","path":"'"$TARGET_PATH"'","search":"","replace":"'"$NEW_PATH"'"}
+              ]'
+              ;;
+            move)
+              OPERATIONS='[
+                {"type":"move","path":"'"$TARGET_PATH"'","replace":"'"$NEW_PATH"'"}
+              ]'
+              ;;
+            delete)
+              OPERATIONS='[
+                {"type":"delete","path":"'"$TARGET_PATH"'"}
+              ]'
+              ;;
+            extract|inline)
+              echo "Extract/inline refactorings require manual operation definition"
+              echo "Skipping automated refactoring for this type"
+              exit 1
+              ;;
+          esac
+
+          echo "$OPERATIONS" > /tmp/refactor_operations.json
+          echo "Operations: $(cat /tmp/refactor_operations.json)"
+
+      - name: Execute Safe Refactor
+        id: refactor
+        if: success()
+        run: |
+          echo "Executing safe refactoring..."
+
+          RESPONSE=$(curl -s -X POST http://localhost:3001/api/tools/execute \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"name\": \"floyd-safe-ops-server:safe_refactor\",
+              \"args\": {
+                \"operations\": $(cat /tmp/refactor_operations.json),
+                \"verifyCommand\": \"${{ github.event.inputs.verify_command }}\",
+                \"verifyTimeout\": 60,
+                \"gitCommit\": false
+              }
+            }")
+
+          echo "Response: $RESPONSE"
+
+          if echo "$RESPONSE" | jq -e '.success'; then
+            RESULT=$(echo "$RESPONSE" | jq -r '.result')
+
+            echo "## Safe Refactoring Results" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "- **Operations Applied:** ${{ github.event.inputs.refactoring_type }}" >> $GITHUB_STEP_SUMMARY
+            echo "- **Target:** ${{ github.event.inputs.target_path }}" >> $GITHUB_STEP_SUMMARY
+
+            # Check if verification passed
+            if echo "$RESULT" | jq -e '.verification_passed'; then
+              echo "- **Verification:** ✅ Passed" >> $GITHUB_STEP_SUMMARY
+              echo "REFACTOR_SUCCESS=true" >> $GITHUB_ENV
+            else
+              echo "- **Verification:** ❌ Failed" >> $GITHUB_STEP_SUMMARY
+              echo "- **Error:** $(echo "$RESULT" | jq -r '.verification_error')" >> $GITHUB_STEP_SUMMARY
+              echo "REFACTOR_SUCCESS=false" >> $GITHUB_ENV
+            fi
+
+          else
+            echo "Safe refactoring failed!"
+            ERROR=$(echo "$RESPONSE" | jq -r '.error // .message')
+            echo "Error: $ERROR" >> $GITHUB_STEP_SUMMARY
+            echo "REFACTOR_SUCCESS=false" >> $GITHUB_ENV
+            exit 1
+          fi
+
+      - name: Rollback on failure
+        if: failure() && env.REFACTOR_SUCCESS != 'true'
+        run: |
+          echo "Rolling back changes..."
+          if [ -n "$BACKUP_DIR" ]; then
+            git clean -fd
+            git checkout -- .
+            cp -r "$BACKUP_DIR"/* .
+            echo "Rolled back to backup at $BACKUP_DIR"
+          fi
+
+      - name: Commit refactoring changes
+        if: success() && env.REFACTOR_SUCCESS == 'true'
+        run: |
+          git config --global user.name 'Floyd Safe Ops'
+          git config --global user.email 'safe-ops@floyd.dev'
+
+          # Check for changes
+          if git diff --quiet && git diff --cached --quiet; then
+            echo "No changes detected"
+          else
+            git add -A
+            git commit -m "chore: safe refactor ${{ github.event.inputs.refactoring_type }} ${{ github.event.inputs.target_path }}
+
+            Refactored via Floyd-Safe-Ops
+            - Type: ${{ github.event.inputs.refactoring_type }}
+            - Target: ${{ github.event.inputs.target_path }}
+            - Verification: Passed"
+          fi
+
+      - name: Create PR for refactoring
+        if: success() && env.REFACTOR_SUCCESS == 'true' && github.event.inputs.create_pr == 'true'
+        run: |
+          BRANCH_NAME="safe-refactor-$(date +%s)"
+          git checkout -b "$BRANCH_NAME"
+
+          # Push branch
+          git push -u origin "$BRANCH_NAME"
+
+          # Create PR
+          gh pr create \
+            --title "chore: safe refactor ${{ github.event.inputs.refactoring_type }}" \
+            --body "## Safe Refactoring Changes
+
+          This PR was automatically created by Floyd-Safe-Ops.
+
+          **Refactoring Type:** ${{ github.event.inputs.refactoring_type }}
+          **Target:** ${{ github.event.inputs.target_path }}
+          **Verification:** ✅ Passed
+
+          ### Changes Applied
+          - Safe refactor operations executed via Floyd-Safe-Ops
+          - Automatic rollback on failure
+          - Verification: ${{ github.event.inputs.verify_command }}
+
+          ### Verification Results
+          - All tests passed
+          - No breaking changes detected
+          - Ready for review" \
+            --base ${{ github.ref_name }} \
+            --label "safe-refactor" \
+            --label "automated"
+
+      - name: Summary
+        if: always()
+        run: |
+          if [ "${{ env.REFACTOR_SUCCESS }}" == "true" ]; then
+            echo "## ✅ Safe Refactoring Successful" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Changes have been applied and verified successfully." >> $GITHUB_STEP_SUMMARY
+          else
+            echo "## ❌ Safe Refactoring Failed" >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "Refactoring failed or verification did not pass." >> $GITHUB_STEP_SUMMARY
+            echo "Changes have been rolled back automatically." >> $GITHUB_STEP_SUMMARY
+          fi

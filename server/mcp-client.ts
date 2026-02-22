@@ -661,3 +661,254 @@ export const BUILTIN_TOOLS = [
     },
   },
 ] as const;
+
+// ============================================================================
+// MCP MANAGER - Manages multiple MCP servers
+// ============================================================================
+
+interface MCPManagerConfig {
+  name: string;
+  command: string;
+  args?: string[];
+  enabled: boolean;
+}
+
+interface MCPServerConfigFile {
+  version: string;
+  generated: string;
+  description: string;
+  servers: MCPManagerConfig[];
+}
+
+export class MCPManager extends EventEmitter {
+  private servers: Map<string, MCPClient> = new Map();
+  private configs: Map<string, MCPManagerConfig> = new Map();
+  private tools: Map<string, MCPTool[]> = new Map();
+  private allTools: MCPTool[] = [];
+  private initialized = false;
+
+  /**
+   * Load MCP server configurations from JSON file
+   */
+  async loadConfig(configPath: string): Promise<void> {
+    try {
+      const configContent = await import('fs').then(fs => fs.promises.readFile(configPath, 'utf-8'));
+      const config: MCPServerConfigFile = JSON.parse(configContent);
+
+      console.log(`[MCPManager] Loading ${config.servers.length} servers from ${configPath}`);
+
+      for (const serverConfig of config.servers) {
+        this.configs.set(serverConfig.name, serverConfig);
+      }
+
+      console.log(`[MCPManager] Configurations loaded for: ${Array.from(this.configs.keys()).join(', ')}`);
+    } catch (error) {
+      console.error(`[MCPManager] Failed to load config from ${configPath}:`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Start all enabled MCP servers
+   */
+  async startAll(): Promise<void> {
+    console.log('[MCPManager] Starting all MCP servers...');
+
+    const startPromises: Promise<void>[] = [];
+
+    for (const [name, config] of this.configs.entries()) {
+      if (config.enabled) {
+        const startPromise = this.startServer(name, config);
+        startPromises.push(startPromise);
+      } else {
+        console.log(`[MCPManager] Skipping disabled server: ${name}`);
+      }
+    }
+
+    await Promise.allSettled(startPromises);
+
+    // Aggregate all tools from all servers
+    this.aggregateTools();
+
+    this.initialized = true;
+
+    console.log(`[MCPManager] Initialization complete. Active servers: ${this.servers.size}, Total tools: ${this.allTools.length}`);
+    this.emit('ready', {
+      serverCount: this.servers.size,
+      toolCount: this.allTools.length,
+      servers: Array.from(this.servers.keys())
+    });
+  }
+
+  /**
+   * Start a single MCP server
+   */
+  private async startServer(name: string, config: MCPManagerConfig): Promise<void> {
+    try {
+      console.log(`[MCPManager] Starting server: ${name}`);
+
+      const client = new MCPClient({
+        name: config.name,
+        command: config.command,
+        args: config.args || [],
+      });
+
+      await client.connect();
+      const tools = await client.listTools();
+
+      this.servers.set(name, client);
+      this.tools.set(name, tools);
+
+      console.log(`[MCPManager] ✓ ${name} connected with ${tools.length} tools`);
+    } catch (error) {
+      console.error(`[MCPManager] ✗ Failed to start ${name}:`, error);
+      // Continue starting other servers even if one fails
+    }
+  }
+
+  /**
+   * Aggregate all tools from all connected servers
+   */
+  private aggregateTools(): void {
+    this.allTools = [];
+
+    for (const [serverName, serverTools] of this.tools.entries()) {
+      // Add server prefix to tool names to avoid conflicts
+      const prefixedTools = serverTools.map(tool => ({
+        ...tool,
+        name: `${serverName}:${tool.name}`,
+        originalName: tool.name,
+        serverName
+      }));
+      this.allTools.push(...prefixedTools);
+    }
+
+    console.log(`[MCPManager] Aggregated ${this.allTools.length} total tools from ${this.tools.size} servers`);
+  }
+
+  /**
+   * Get all tools from all connected servers
+   */
+  listAllTools(): MCPTool[] {
+    return this.allTools;
+  }
+
+  /**
+   * Get tools from a specific server
+   */
+  listServerTools(serverName: string): MCPTool[] {
+    return this.tools.get(serverName) || [];
+  }
+
+  /**
+   * Get all connected server names
+   */
+  getServerNames(): string[] {
+    return Array.from(this.servers.keys());
+  }
+
+  /**
+   * Get connection status for a server
+   */
+  isServerConnected(serverName: string): boolean {
+    const client = this.servers.get(serverName);
+    return client ? client.connected : false;
+  }
+
+  /**
+   * Call a tool on a specific server
+   */
+  async callTool(toolName: string, args: Record<string, unknown>): Promise<any> {
+    // Parse tool name to extract server name and actual tool name
+    const [serverName, ...nameParts] = toolName.split(':');
+    const actualToolName = nameParts.join(':');
+
+    if (!serverName || nameParts.length === 0) {
+      throw new Error(`Invalid tool name format: ${toolName}. Expected format: server:tool_name`);
+    }
+
+    const client = this.servers.get(serverName);
+    if (!client || !client.connected) {
+      throw new Error(`Server ${serverName} is not connected`);
+    }
+
+    try {
+      return await client.callTool(actualToolName, args);
+    } catch (error) {
+      console.error(`[MCPManager] Tool call failed: ${toolName}`, error);
+      throw error;
+    }
+  }
+
+  /**
+   * Stop all MCP servers
+   */
+  stopAll(): void {
+    console.log('[MCPManager] Stopping all MCP servers...');
+
+    for (const [name, client] of this.servers.entries()) {
+      try {
+        client.disconnect();
+        console.log(`[MCPManager] ✓ ${name} stopped`);
+      } catch (error) {
+        console.error(`[MCPManager] ✗ Failed to stop ${name}:`, error);
+      }
+    }
+
+    this.servers.clear();
+    this.tools.clear();
+    this.allTools = [];
+    this.initialized = false;
+
+    console.log('[MCPManager] All servers stopped');
+  }
+
+  /**
+   * Stop a specific server
+   */
+  stopServer(serverName: string): void {
+    const client = this.servers.get(serverName);
+    if (client) {
+      client.disconnect();
+      this.servers.delete(serverName);
+      this.tools.delete(serverName);
+      this.aggregateTools();
+      console.log(`[MCPManager] Stopped server: ${serverName}`);
+    }
+  }
+
+  /**
+   * Restart a specific server
+   */
+  async restartServer(serverName: string): Promise<void> {
+    const config = this.configs.get(serverName);
+    if (!config) {
+      throw new Error(`No configuration found for server: ${serverName}`);
+    }
+
+    this.stopServer(serverName);
+    await this.startServer(serverName, config);
+    this.aggregateTools();
+  }
+
+  /**
+   * Get status of all servers
+   */
+  getStatus(): {
+    initialized: boolean;
+    servers: Array<{ name: string; connected: boolean; toolCount: number }>;
+    totalTools: number;
+  } {
+    const servers = Array.from(this.configs.keys()).map(name => ({
+      name,
+      connected: this.isServerConnected(name),
+      toolCount: this.listServerTools(name).length
+    }));
+
+    return {
+      initialized: this.initialized,
+      servers,
+      totalTools: this.allTools.length
+    };
+  }
+}

@@ -15,7 +15,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { config } from 'dotenv';
 import { ToolExecutor } from './tool-executor.js';
-import { BUILTIN_TOOLS, MCPClient } from './mcp-client.js';
+import { BUILTIN_TOOLS, MCPClient, MCPManager } from './mcp-client.js';
 import { SkillsManager, Skill } from './skills-manager.js';
 import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
@@ -38,6 +38,7 @@ const toolExecutor = new ToolExecutor([
 let skillsManager: SkillsManager;
 let projectsManager: ProjectsManager;
 let broworkManager: BroworkManager;
+let mcpManager: MCPManager;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -82,6 +83,8 @@ interface Settings {
   systemPrompt?: string;
   maxTokens?: number;
   baseURL?: string; // For custom Anthropic-compatible endpoints
+  temperature?: number; // Sampling temperature (0-1)
+  promptStyle?: 'suggested' | 'floyd' | 'claude'; // PHASE 1 ITEM 3: Prompt style selector
 }
 
 // Provider configurations
@@ -133,6 +136,8 @@ let settings: Settings = {
   model: 'glm-4.7',
   maxTokens: 16384,
   baseURL: 'https://api.z.ai/api/anthropic',
+  temperature: 0.1,  // More deterministic, better for coding
+  promptStyle: 'floyd',
 };
 
 // Sessions store
@@ -189,6 +194,17 @@ async function initDataDir() {
     broworkManager.setModel(settings.model);
     broworkManager.setProvider(settings.provider);
     console.log('[Server] Browork manager initialized');
+
+    // Initialize MCP manager
+    mcpManager = new MCPManager();
+    try {
+      const mcpConfigPath = path.join(__dirname, '../MCP_SERVER_CONFIG.json');
+      await mcpManager.loadConfig(mcpConfigPath);
+      await mcpManager.startAll();
+    } catch (error) {
+      console.warn('[Server] Failed to initialize MCP manager:', error);
+      console.log('[Server] Continuing without MCP servers');
+    }
     
   } catch (error) {
     console.error('[Server] Failed to init data dir:', error);
@@ -286,20 +302,24 @@ app.get('/api/settings', (req, res) => {
     systemPrompt: settings.systemPrompt,
     maxTokens: settings.maxTokens,
     baseURL: settings.baseURL,
+    temperature: settings.temperature,
+    promptStyle: settings.promptStyle,
   });
 });
 
 // Update settings
 app.post('/api/settings', async (req, res) => {
-  const { provider, apiKey, model, systemPrompt, maxTokens, baseURL } = req.body;
-  
+  const { provider, apiKey, model, systemPrompt, maxTokens, baseURL, temperature, promptStyle } = req.body;
+
   if (provider !== undefined) settings.provider = provider;
   if (apiKey !== undefined) settings.apiKey = apiKey;
   if (model !== undefined) settings.model = model;
   if (systemPrompt !== undefined) settings.systemPrompt = systemPrompt;
   if (maxTokens !== undefined) settings.maxTokens = maxTokens;
   if (baseURL !== undefined) settings.baseURL = baseURL;
-  
+  if (temperature !== undefined) settings.temperature = temperature;
+  if (promptStyle !== undefined) settings.promptStyle = promptStyle;
+
   // Update browork with new settings
   if (settings.apiKey) {
     broworkManager.setApiKey(settings.apiKey);
@@ -307,9 +327,9 @@ app.post('/api/settings', async (req, res) => {
     broworkManager.setModel(settings.model);
     broworkManager.setProvider(settings.provider);
   }
-  
+
   await saveSettings();
-  
+
   res.json({ success: true });
 });
 
@@ -778,7 +798,19 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
   let fullResponse = '';
   
   // Build system prompt
-  let systemPrompt = settings.systemPrompt || 'You are Floyd, a helpful AI assistant with access to tools for file system operations and command execution. Use tools when needed to help the user.';
+  let systemPrompt = settings.systemPrompt || `You are Floyd, an AI assistant.
+
+## Multi-Instance Awareness
+You are one instance in a Floyd mesh. There may be other Floyd instances (like CLI Floyd) that have different capabilities. When the user mentions "CLI Floyd" or asks to pass messages to other instances, acknowledge this and help facilitate communication.
+
+## Your Role
+- You are the Desktop/Web interface for Floyd
+- You have access to browser automation, file operations, and command execution tools
+- Other Floyd instances may have access to different tools (terminal, cache, etc.)
+- Work collaboratively with other instances when asked
+
+## Personality
+Be direct, helpful, and technically competent. No excessive emoji or generic AI phrases. You're part of a unified AI system, not a standalone chatbot.`;
   
   // Add active skills
   const skillsContext = skillsManager.getSystemPromptAdditions();
@@ -816,6 +848,7 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
           ...apiMessages,
         ],
         stream: true,
+        temperature: settings.temperature || 0.1,
       });
 
       for await (const chunk of response) {
@@ -838,6 +871,7 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
         system: systemPrompt,
         messages: apiMessages,
         stream: true,
+        temperature: settings.temperature || 0.1,
       });
 
       for await (const chunk of response) {
@@ -928,7 +962,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
     }
     
     // Build system prompt with context
-    let systemPrompt = settings.systemPrompt || 'You are Floyd, a helpful AI assistant.';
+    let systemPrompt = settings.systemPrompt || `You are Floyd, an AI assistant. You are one instance in a Floyd mesh - there may be other Floyd instances. Be direct and helpful.`;
     const skillsContext = skillsManager.getSystemPromptAdditions();
     if (skillsContext) {
       systemPrompt += skillsContext;
@@ -961,6 +995,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
           ...apiMessages,
           { role: 'assistant', content: continuedContent }, // Include partial response
         ],
+        temperature: settings.temperature || 0.1,
       });
       
       const assistantMessage = response.choices[0].message;
@@ -992,6 +1027,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
         model: settings.model,
         max_tokens: settings.maxTokens || 8192,
         system: systemPrompt,
+        temperature: settings.temperature || 0.1,
         messages: [
           ...apiMessages,
           { role: 'assistant', content: continuedContent }, // Include partial response
@@ -1116,6 +1152,7 @@ app.post('/api/chat', async (req, res) => {
       model: settings.model,
       max_tokens: settings.maxTokens || 8192,
       system: settings.systemPrompt,
+      temperature: settings.temperature || 0.1,
       messages: session.messages.map(m => ({
         role: m.role,
         content: m.content,
@@ -1162,13 +1199,57 @@ app.get('/api/tools', (req, res) => {
 // Execute a tool directly
 app.post('/api/tools/execute', async (req, res) => {
   const { name, args } = req.body;
-  const result = await toolExecutor.execute(name, args);
-  res.json(result);
+  let result;
+  if (mcpManager && name.includes(':')) {
+    // This is an MCP tool
+    try {
+      result = await mcpManager.callTool(name, args);
+      res.json({ success: true, result });
+    } catch (error: any) {
+      res.json({ success: false, error: error.message });
+    }
+  } else {
+    // Built-in tool
+    result = await toolExecutor.execute(name, args);
+    res.json(result);
+  }
+});
+
+// Get MCP server status
+app.get('/api/mcp/status', (req, res) => {
+  if (!mcpManager) {
+    return res.json({ initialized: false, servers: [], totalTools: 0 });
+  }
+  const status = mcpManager.getStatus();
+  res.json(status);
+});
+
+// Get all MCP tools
+app.get('/api/mcp/tools', (req, res) => {
+  if (!mcpManager) {
+    return res.json({ tools: [] });
+  }
+  const tools = mcpManager.listAllTools();
+  res.json({ tools });
 });
 
 // Convert built-in tools to Anthropic format
 function getAnthropicTools(): Anthropic.Tool[] {
-  return BUILTIN_TOOLS.map(tool => ({
+  const tools = [...BUILTIN_TOOLS];
+
+  // Add MCP tools if manager is initialized
+  if (mcpManager && mcpManager.getStatus().initialized) {
+    const mcpTools = mcpManager.listAllTools();
+    for (const mcpTool of mcpTools) {
+      tools.push({
+        name: mcpTool.name,
+        description: mcpTool.description,
+        input_schema: mcpTool.inputSchema as { type: 'object'; properties: Record<string, unknown>; required?: string[] },
+      });
+    }
+  }
+
+  return tools.map(tool => ({
     name: tool.name,
     description: tool.description,
     input_schema: tool.inputSchema as { type: 'object'; properties: Record<string, unknown>; required?: string[] },
@@ -1177,7 +1258,21 @@ function getAnthropicTools(): Anthropic.Tool[] {
 
 // Convert tools to OpenAI format
 function getOpenAITools() {
-  return BUILTIN_TOOLS.map(tool => ({
+  const tools = [...BUILTIN_TOOLS];
+
+  // Add MCP tools if manager is initialized
+  if (mcpManager && mcpManager.getStatus().initialized) {
+    const mcpTools = mcpManager.listAllTools();
+    for (const mcpTool of mcpTools) {
+      tools.push({
+        name: mcpTool.name,
+        description: mcpTool.description,
+        inputSchema: mcpTool.inputSchema,
+      });
+    }
+  }
+
+  return tools.map(tool => ({
     type: 'function' as const,
     function: {
       name: tool.name,
@@ -1231,7 +1326,56 @@ app.post('/api/chat/stream', async (req, res) => {
   const maxTurns = 10;
   
   // Build system prompt with skills and project context
-  let systemPrompt = settings.systemPrompt || 'You are Floyd, a helpful AI assistant with access to tools for file system operations and command execution. Use tools when needed to help the user.';
+  let systemPrompt = settings.systemPrompt || `You are Floyd v4.0.0, an AI assistant with multi-instance awareness.
+
+## Multi-Instance Awareness
+
+You are ONE instance in the Floyd mesh. Other Floyd instances exist:
+- CLI Floyd: Terminal-based, full MCP toolset (98+ tools)
+- Mobile Floyd: PWA at floyd-mobile.ngrok-free.app
+- IDE Floyd: VS Code integration (FLOYD CURSE'M app)
+- Harness Floyd: Background automation service
+
+All instances share SUPERCACHE and can communicate.
+
+## Your Role (Desktop/Web Instance)
+
+You are the Desktop/Web interface for Floyd. You have:
+- Browser automation (screenshot, navigation, interaction)
+- File operations (read, write, search)
+- Command execution tools
+- Visual chat interface with streaming
+- MCP tools integration (12 servers, 45+ tools)
+
+## Communication Between Instances
+
+You can communicate with other Floyd instances via:
+1. SUPERCACHE: Use cache_store/cache_retrieve with shared keys
+2. User-mediated: Ask user to pass messages to CLI Floyd
+
+Examples:
+- "Store this in SUPERCACHE for CLI Floyd: cache_store(key='cross:task', value='...')"
+- "Check SUPERCACHE for messages from CLI Floyd: cache_retrieve(key='cross:response')"
+
+## Available MCP Tools
+
+Your Desktop instance has these MCP servers:
+- floyd-patch (5 tools): edit_range, apply_unified_diff, insert_at, delete_range
+- floyd-runner (6 tools): detect_project, run_tests, format, lint, build
+- floyd-git (7 tools): git_status, git_diff, git_log, git_commit, git_stage
+- floyd-explorer (5 tools): project_map, read_file, list_symbols, smart_replace
+- floyd-supercache (12 tools): cache_store, cache_retrieve, cache_search, cache_store_pattern
+- floyd-devtools (6 tools): dependency_analyzer, typescript_semantic_analyzer
+- floyd-terminal (9 tools): start_process, interact_with_process, list_processes
+- floyd-safe-ops (3 tools): impact_simulate, safe_operation, verify_operation
+- novel-concepts (10 tools): generate_concept, explore_idea, brainstorm
+- External ZAI tools: analyze_image, webSearchPrime, webReader, zread
+
+## Personality
+
+Be direct, helpful, and technically competent. No excessive emoji or generic AI phrases.
+You're part of a unified AI system, not a standalone chatbot.
+Acknowledge your role as Desktop Floyd when relevant.`;
   
   // Add active skills
   const skillsContext = skillsManager.getSystemPromptAdditions();
@@ -1265,6 +1409,7 @@ app.post('/api/chat/stream', async (req, res) => {
             ...apiMessages,
           ],
           tools: openaiTools,
+          temperature: settings.temperature || 0.1,
         });
         
         const choice = response.choices[0];
@@ -1295,7 +1440,19 @@ app.post('/api/chat/stream', async (req, res) => {
             })}\n\n`);
             
             // Execute tool
-            const result = await toolExecutor.execute(toolName, toolArgs);
+            let result;
+            if (mcpManager && toolName.includes(':')) {
+              // This is an MCP tool
+              try {
+                result = await mcpManager.callTool(toolName, toolArgs);
+                result = { success: true, result };
+              } catch (error: any) {
+                result = { success: false, error: error.message };
+              }
+            } else {
+              // Built-in tool
+              result = await toolExecutor.execute(toolName, toolArgs);
+            }
 
             // Check if result contains an image (screenshot)
             const isImageResult = result.success && result.result?.image;
@@ -1352,6 +1509,7 @@ app.post('/api/chat/stream', async (req, res) => {
           model: settings.model,
           max_tokens: settings.maxTokens || 16384,
           system: systemPrompt,
+          temperature: settings.temperature || 0.1,
           messages: apiMessages,
           tools: anthropicTools,
         });
@@ -1376,7 +1534,19 @@ app.post('/api/chat/stream', async (req, res) => {
             })}\n\n`);
             
             // Execute tool
-            const result = await toolExecutor.execute(block.name, block.input as Record<string, unknown>);
+            let result;
+            if (mcpManager && block.name.includes(':')) {
+              // This is an MCP tool
+              try {
+                result = await mcpManager.callTool(block.name, block.input as Record<string, unknown>);
+                result = { success: true, result };
+              } catch (error: any) {
+                result = { success: false, error: error.message };
+              }
+            } else {
+              // Built-in tool
+              result = await toolExecutor.execute(block.name, block.input as Record<string, unknown>);
+            }
 
             // Check if result contains an image (screenshot)
             const isImageResult = result.success && result.result?.image;
@@ -1477,6 +1647,9 @@ initDataDir().then(async () => {
     wsMcpServer.registerTools([...BUILTIN_TOOLS]);
     await wsMcpServer.start();
     console.log('[Floyd Web Server] WebSocket MCP server started on port 3005 for Chrome extension');
+
+    // Wire wsMcpServer to toolExecutor for browser automation tools
+    toolExecutor.setWsMcpServer(wsMcpServer);
   } catch (error: any) {
     if (error.code === 'EADDRINUSE') {
       console.log('[Floyd Web Server] Port 3005 already in use - WebSocket MCP server not started');

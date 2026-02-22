@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.floyd.desktop.devserver</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Volumes/Storage/FloydDesktopWeb-v2/start-dev.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <false/>
+    <key>StandardOutPath</key>
+    <string>/Volumes/Storage/FloydDesktopWeb-v2/logs/devserver.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Volumes/Storage/FloydDesktopWeb-v2/logs/devserver.err</string>
+    <key>WorkingDirectory</key>
+    <string>/Volumes/Storage/FloydDesktopWeb-v2</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+    </dict>
+</dict>
+</plist>

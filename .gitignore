@@ -28,3 +28,9 @@ dist-server/
 
 # Build artifacts
 *.tsbuildinfo
+release/
+*.dmg
+*.exe
+*.app
+*.zip
+*.blockmap

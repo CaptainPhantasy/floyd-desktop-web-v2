@@ -1,0 +1,118 @@
+# Floyd Desktop - Electron Builder Configuration
+# Version 1.0.0
+
+appId: com.floyd.desktop
+productName: Floyd Desktop
+copyright: Copyright © 2026 Floyd Desktop
+
+# Directory configuration
+directories:
+  buildResources: build
+  output: release
+
+# Files to include in package
+files:
+  - dist/**/*
+  - dist-server/**/*
+  - electron/**/*
+  - node_modules/**/*
+  - package.json
+  - assets/**/*
+
+# Extra files to include
+extraFiles:
+  - from: assets
+    to: assets
+  - from: .floyd-data
+    to: .floyd-data
+    filter: '**/*'
+
+# Asar configuration (don't package server separately - keep accessible)
+asarUnpack:
+  - dist-server/**/*
+  - node_modules/@anthropic-ai/**/*
+  - node_modules/openai/**/*
+  - node_modules/puppeteer/**/*
+
+# macOS configuration
+mac:
+  category: public.app-category.productivity
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+    - target: zip
+      arch:
+        - arm64
+        - x64
+  icon: build/icon.icns
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  gatekeeperAssess: false
+  hardenedRuntime: true
+  notarize: false
+
+# DMG configuration
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+  window:
+    width: 540
+    height: 380
+  background: assets/dmg-background.png
+
+# Windows configuration
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+    - target: portable
+      arch:
+        - x64
+  icon: build/icon.ico
+  artifactName: ${productName}-${version}-${arch}.${ext}
+
+# NSIS installer configuration
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  installerIcon: build/icon.ico
+  uninstallerIcon: build/icon.ico
+  installerHeader: build/installer-header.bmp
+  installerSidebar: build/installer-sidebar.bmp
+  uninstallerSidebar: build/uninstaller-sidebar.bmp
+  deleteAppDataOnUninstall: false
+  runAfterFinish: true
+
+# Linux configuration
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: build/icons
+  category: Development
+  maintainer: Floyd Desktop <maintainer@floyd.desktop>
+
+# Publishing configuration (for updates)
+publish:
+  provider: github
+  owner: floyd-desktop
+  repo: floyd-desktop
+
+# Package configuration
+npmRebuild: true
+npmSkipBuildFromScripts: false

@@ -11,6 +11,18 @@ export default defineConfig({
   },
   server: {
     port: 5173,
+    host: true,
+    strictPort: false,
+    cors: true,
+    allowedHosts: [
+      'localhost',
+      'floyd-mobile.ngrok-free.app',
+      '.ngrok-free.app',
+      '.ngrok-free.dev',
+    ],
+    hmr: {
+      clientPort: 443,
+    },
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

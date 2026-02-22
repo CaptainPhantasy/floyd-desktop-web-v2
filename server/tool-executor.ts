@@ -28,11 +28,38 @@ export class ToolExecutor {
   private allowedPaths: string[] = [];
   private blockedCommands: string[] = ['rm -rf /', 'mkfs', 'dd if=', ':(){'];
   private cacheManager: CacheManager;
+  private wsMcpServer: any = null;  // Reference to WebSocketMCPServer for Chrome extension
+  private lastBrowserUrl: string | null = null;  // Track last navigated URL for browser_read_page
 
   constructor(allowedPaths?: string[]) {
     this.allowedPaths = allowedPaths || [process.cwd(), process.env.HOME || '/'];
     // Initialize cache manager using the first allowed path (usually data dir or cwd)
     this.cacheManager = new CacheManager(this.allowedPaths[0]);
+  }
+
+  // Allow setting WebSocket MCP server reference
+  setWsMcpServer(server: any) {
+    this.wsMcpServer = server;
+  }
+
+  // Call browser automation tools via Chrome extension
+  private async callBrowserTool(toolName: string, args: Record<string, unknown>): Promise<ToolResult> {
+    if (!this.wsMcpServer) {
+      return { success: false, error: 'WebSocket MCP server not initialized' };
+    }
+
+    // Check if any extension clients are connected
+    if (!this.wsMcpServer.clients || this.wsMcpServer.clients.size === 0) {
+      return { success: false, error: 'Chrome extension not connected' };
+    }
+
+    try {
+      // Send request and wait for response
+      const result = await this.wsMcpServer.callTool(toolName, args);
+      return result;
+    } catch (error: any) {
+      return { success: false, error: error.message || 'Failed to call browser tool' };
+    }
   }
 
   setAllowedPaths(paths: string[]) {
@@ -140,11 +167,43 @@ export class ToolExecutor {
         case 'cache_search':
           return await this.cacheSearch(args);
 
-        // Browser automation
+        // Browser automation (Chrome Extension via WebSocket MCP)
+        case 'browser_navigate':
+          const navResult = await this.callBrowserTool('browser_navigate', args);
+          // Track the URL for subsequent browser_read_page calls
+          if (navResult.success && navResult.result?.url) {
+            this.lastBrowserUrl = navResult.result.url as string;
+          }
+          return navResult;
+        case 'browser_read_page':
+          // Extension has a bug: "DOM agent hasn't been enabled"
+          // Use Puppeteer-based implementation instead
+          // If no URL provided, use the last navigated URL
+          let readArgs = { ...args };
+          if (!readArgs.url && this.lastBrowserUrl) {
+            readArgs.url = this.lastBrowserUrl;
+          }
+          return await this.tryPuppeteerPageRead(readArgs);
+        case 'browser_click':
+          return await this.callBrowserTool('browser_click', args);
+        case 'browser_type':
+          return await this.callBrowserTool('browser_type', args);
+        case 'browser_get_tabs':
+          return await this.callBrowserTool('browser_get_tabs', args);
         case 'browser_screenshot':
-          return await this.browserScreenshot(args);
-        
+          // Extension doesn't have browser_screenshot implemented ("Unknown tool: browser_screenshot")
+          // Use Puppeteer - if no URL provided, use the last navigated URL
+          let screenshotArgs = { ...args };
+          if (!screenshotArgs.url && this.lastBrowserUrl) {
+            screenshotArgs.url = this.lastBrowserUrl;
+          }
+          return await this.browserScreenshot(screenshotArgs);
+
         default:
+          // Try delegating to Chrome extension for unknown tools
+          if (this.wsMcpServer && toolName.startsWith('browser_')) {
+            return await this.callBrowserTool(toolName, args);
+          }
           return { success: false, error: `Unknown tool: ${toolName}` };
       }
     } catch (err: any) {
@@ -1146,6 +1205,48 @@ ${content}
           format: 'png',
           encoding: 'base64',
           mimeType: 'image/png',
+        },
+      };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  }
+
+  private async tryPuppeteerPageRead(args: Record<string, unknown>): Promise<ToolResult> {
+    const { url } = args as { url?: string };
+
+    if (!url) {
+      return { success: false, error: 'URL required for Puppeteer page read' };
+    }
+
+    try {
+      const puppeteer = await import('puppeteer');
+      const browser = await puppeteer.launch({
+        headless: true,
+        args: ['--no-sandbox', '--disable-setuid-sandbox'],
+      });
+
+      const page = await browser.newPage();
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 30000 });
+
+      // Get page title and text content
+      const title = await page.title().catch(() => 'Unknown');
+      const text = await page.evaluate(() => {
+        // Remove script and style elements
+        const elements = document.querySelectorAll('script, style, noscript');
+        elements.forEach(el => el.remove());
+
+        return document.body.innerText;
+      });
+
+      await browser.close();
+
+      return {
+        success: true,
+        result: {
+          content: text.substring(0, 10000), // Limit to 10k characters
+          title: title,
+          url: url
         },
       };
     } catch (err: any) {

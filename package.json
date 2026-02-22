@@ -1,17 +1,28 @@
 {
   "name": "floyd-desktop",
-  "version": "0.1.0",
-  "description": "Floyd Desktop - AI Assistant (Web Version)",
+  "version": "1.0.0",
+  "description": "Floyd Desktop - AI Assistant",
+  "main": "electron/main.js",
   "type": "module",
+  "author": "Floyd Desktop",
+  "license": "MIT",
   "scripts": {
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite",
-    "build": "vite build && tsc -p tsconfig.server.json",
+    "build": "vite build && npm run build:server",
+    "build:server": "npx esbuild server/index.ts --platform=node --target=node20 --bundle --format=esm --outfile=dist-server/index.js --external:@anthropic-ai/sdk --external:openai --external:express --external:ws --external:fs-extra --external:glob --external:globby --external:dotenv --external:uuid --external:puppeteer && npx esbuild server/*.ts --platform=node --target=node20 --bundle --format=esm --outdir=dist-server --external:@anthropic-ai/sdk --external:openai --external:express --external:ws --external:fs-extra --external:glob --external:globby --external:dotenv --external:uuid --external:puppeteer",
     "start": "node dist-server/index.js",
     "test": "vitest",
     "test:ui": "vitest --ui",
-    "test:run": "vitest run"
+    "test:run": "vitest run",
+    "electron": "electron .",
+    "electron:dev": "concurrently \"npm run dev:server\" \"wait-on http://localhost:3001 && electron .\"",
+    "package": "npm run build && electron-builder",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:win": "npm run build && electron-builder --win",
+    "package:linux": "npm run build && electron-builder --linux",
+    "package:all": "npm run build && electron-builder --mac --win --linux"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.71.2",
@@ -24,7 +35,6 @@
     "cors": "^2.8.5",
     "diff": "8.0.3",
     "dotenv": "^16.4.5",
-    "electron": "40.0.0",
     "express": "^4.21.0",
     "fs-extra": "^11.3.3",
     "glob": "^11.1.0",
@@ -42,6 +52,7 @@
     "uuid": "^13.0.0"
   },
   "devDependencies": {
+    "@electron/notarize": "^3.1.1",
     "@playwright/test": "^1.57.0",
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
@@ -58,12 +69,104 @@
     "@vitest/ui": "^4.0.17",
     "autoprefixer": "^10.4.20",
     "concurrently": "^9.1.0",
+    "electron": "40.0.0",
+    "electron-builder": "^25.1.8",
+    "electron-squirrel-startup": "^1.0.1",
     "jsdom": "^27.4.0",
     "postcss": "^8.4.49",
     "tailwindcss": "^3.4.17",
     "tsx": "^4.21.0",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
-    "vitest": "^4.0.17"
+    "vitest": "^4.0.17",
+    "wait-on": "^8.0.5"
+  },
+  "build": {
+    "appId": "com.LegacyAI.FloydDesktop",
+    "productName": "Floyd Desktop",
+    "directories": {
+      "buildResources": "build",
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-server/**/*",
+      "electron/**/*",
+      "package.json"
+    ],
+    "afterSign": null,
+    "mac": {
+      "category": "public.app-category.productivity",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "identity": "48833NVTJ6"
+    },
+    "dmg": {
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ],
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true
+    },
+    "linux": {
+      "target": [
+        "AppImage"
+      ],
+      "category": "Development",
+      "icon": "build/icons"
+    }
   }
 }

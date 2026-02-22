@@ -1,0 +1,91 @@
+{
+  "version": "1.0.0",
+  "generated": "2026-02-18",
+  "description": "MCP server configuration for FloydDesktopWeb-v2",
+  "servers": [
+    {
+      "name": "pattern-crystallizer-v2",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/pattern-crystallizer-v2/dist/index.js"],
+      "tools": 9,
+      "enabled": true
+    },
+    {
+      "name": "context-singularity-v2",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/context-singularity-v2/dist/index.js"],
+      "tools": 13,
+      "enabled": true
+    },
+    {
+      "name": "hivemind-v2",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/hivemind-v2/dist/index.js"],
+      "tools": 14,
+      "enabled": true
+    },
+    {
+      "name": "omega-v2",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/omega-v2/dist/index.js"],
+      "tools": 8,
+      "enabled": true
+    },
+    {
+      "name": "floyd-devtools-server",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/floyd-devtools-server/dist/index.js"],
+      "tools": 10,
+      "enabled": true
+    },
+    {
+      "name": "floyd-safe-ops-server",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/floyd-safe-ops-server/dist/index.js"],
+      "tools": 3,
+      "enabled": true
+    },
+    {
+      "name": "floyd-supercache-server",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/floyd-supercache-server/dist/index.js"],
+      "tools": 14,
+      "enabled": true
+    },
+    {
+      "name": "floyd-terminal-server",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/floyd-terminal-server/dist/index.js"],
+      "tools": 10,
+      "enabled": true
+    },
+    {
+      "name": "gemini-tools-server",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/gemini-tools-server/dist/index.js"],
+      "tools": 3,
+      "enabled": true
+    },
+    {
+      "name": "lab-lead-server",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/lab-lead-server/dist/index.js"],
+      "tools": 6,
+      "enabled": true
+    },
+    {
+      "name": "novel-concepts-server",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/novel-concepts-server/dist/index.js"],
+      "tools": 12,
+      "enabled": true
+    },
+    {
+      "name": "prompt-library-server",
+      "command": "node",
+      "args": ["/Volumes/Storage/MCP/prompt-library-server/dist/index.js"],
+      "tools": 3,
+      "enabled": true
+    }
+  ]
+}
