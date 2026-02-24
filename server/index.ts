@@ -2133,6 +2133,20 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, '../dist/index.html'));
 });
 
+// Global error handler - catches all unhandled errors in async routes
+app.use((err: Error, req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error('[Server] Unhandled error:', err.message);
+  console.error('[Server] Stack:', err.stack);
+  console.error('[Server] Route:', req.method, req.path);
+  
+  res.status(500).json({ 
+    error: err.message || 'Internal server error',
+    timestamp: new Date().toISOString(),
+    path: req.path,
+    method: req.method
+  });
+});
+
 // Start server
 const PORT = process.env.PORT || 3001;
 

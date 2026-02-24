@@ -172,6 +172,108 @@ export function useApi() {
     return result;
   }, [fetchJson]);
 
+  // Floyd4 streaming message - polls for progressive output
+  const sendFloydMessageStream = useCallback(async (
+    message: string,
+    options: {
+      model?: string;
+      flags?: string[];
+      onThought?: (thought: string) => void;
+      onText?: (text: string) => void;
+      onDone?: (output: string) => void;
+      onError?: (error: string) => void;
+    } = {}
+  ) => {
+    setLoading(true);
+    setError(null);
+    
+    try {
+      // Start the Floyd4 process
+      const result = await fetchJson<{
+        success: boolean;
+        output: string;
+        isRunning: boolean;
+        exitCode: number | null;
+        elapsed_ms: number;
+        sessionId: string;
+      }>('/chat/floyd/message', {
+        method: 'POST',
+        body: JSON.stringify({ 
+          message, 
+          model: options.model, 
+          flags: options.flags 
+        }),
+      });
+      
+      // Process the output for thought/text sections
+      const output = result.output || '';
+      
+      // Parse output for thought blocks (marked with 🧠 or [THINKING])
+      const thoughtRegex = /🧠\s*\[THINKING\]([\s\S]*?)(?=🧠\s*\[|$)/gi;
+      const thoughts: string[] = [];
+      let thoughtMatch;
+      
+      // Extract thoughts
+      while ((thoughtMatch = thoughtRegex.exec(output)) !== null) {
+        thoughts.push(thoughtMatch[1].trim());
+      }
+      
+      // If no thought markers, check for common thinking patterns
+      if (thoughts.length === 0) {
+        const lines = output.split('\n');
+        let currentThought = '';
+        let inThought = false;
+        
+        for (const line of lines) {
+          if (line.includes('[THINKING]') || line.includes('Thinking...') || line.includes('🧠')) {
+            inThought = true;
+            currentThought += line + '\n';
+          } else if (inThought && (line.startsWith('##') || line.startsWith('**') || line.trim() === '')) {
+            if (currentThought.trim()) {
+              thoughts.push(currentThought.trim());
+            }
+            currentThought = '';
+            inThought = false;
+          } else if (inThought) {
+            currentThought += line + '\n';
+          }
+        }
+        
+        if (currentThought.trim()) {
+          thoughts.push(currentThought.trim());
+        }
+      }
+      
+      // Emit thoughts
+      for (const thought of thoughts) {
+        options.onThought?.(thought);
+      }
+      
+      // The main text is the output without the thought sections
+      let mainText = output;
+      for (const thought of thoughts) {
+        mainText = mainText.replace(thought, '');
+      }
+      mainText = mainText.replace(thoughtRegex, '').trim();
+      
+      // Emit text
+      if (mainText) {
+        options.onText?.(mainText);
+      }
+      
+      // Done
+      options.onDone?.(output);
+      
+      return { output, sessionId: result.sessionId };
+    } catch (err: any) {
+      setError(err.message);
+      options.onError?.(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchJson]);
+
   // Chat (streaming with tool support)
   const sendMessageStream = useCallback(async (
     sessionId: string, 
@@ -272,6 +374,7 @@ export function useApi() {
     getFloydConfig,
     startFloydChat,
     sendFloydMessage,
+    sendFloydMessageStream,
     getFloydOutput,
     stopFloydChat,
   };

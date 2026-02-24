@@ -43,6 +43,9 @@ body {
   border-radius: 0.5rem;
   padding: 1rem;
   overflow-x: auto;
+  max-width: 100%;
+  white-space: pre-wrap;
+  word-break: break-word;
 }
 
 .prose code {
@@ -51,6 +54,7 @@ body {
   padding: 0.125rem 0.25rem;
   border-radius: 0.25rem;
   font-size: 0.875em;
+  word-break: break-all;
 }
 
 .prose pre code {

@@ -95,6 +95,7 @@ export function ToolCallCard({ tool, args, result, success, isExecuting }: ToolC
           <pre className={cn(
             'text-xs overflow-x-auto max-h-32 overflow-y-auto',
             'p-2 rounded bg-slate-900',
+            'max-w-full break-all whitespace-pre-wrap',
             success === false && 'text-red-400',
             success === true && 'text-slate-300',
           )}>

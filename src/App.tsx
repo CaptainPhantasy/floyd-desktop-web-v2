@@ -13,6 +13,9 @@ import { ToolCallCard } from '@/components/ToolCallCard';
 import { SkillsPanel } from '@/components/SkillsPanel';
 import { ProjectsPanel } from '@/components/ProjectsPanel';
 import { BroworkPanel } from '@/components/BroworkPanel';
+import { EmergencyStopButton } from '@/components/EmergencyStopButton';
+import { ThinkingTerminal } from '@/components/ThinkingTerminal';
+import { ExportChatButton } from '@/components/ExportChatButton';
 import { 
   Settings as SettingsIcon, 
   Send, 
@@ -50,6 +53,8 @@ export default function App() {
     success?: boolean;
     isExecuting: boolean;
   }>>([]);
+  const [emergencyMode, setEmergencyMode] = useState(false);
+  const [thinkingContent, setThinkingContent] = useState('');
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -107,29 +112,27 @@ export default function App() {
   }, []);
 
   // Auto-refresh: Poll for new messages from mobile/other clients
+  // NOTE: Only update if server has MORE messages than local (another client added)
   useEffect(() => {
     if (status !== 'ready') return;
 
-    // Poll every 3 seconds for updates
     const interval = setInterval(async () => {
       if (!currentSession || isStreaming) return;
 
       try {
-        // Fetch updated session data
         const updatedSession = await api.getSession(currentSession.id);
-        const updatedSessions = await api.getSessions();
 
-        // Update messages if count changed (new message from mobile)
-        if (updatedSession.messages.length !== messages.length) {
+        // Only update if server has MORE messages (from another client)
+        // Never overwrite local messages with fewer server messages
+        if (updatedSession.messages.length > messages.length) {
           setMessages(updatedSession.messages);
         }
 
-        // Update sessions list (new sessions from mobile)
+        const updatedSessions = await api.getSessions();
         if (updatedSessions.length !== sessions.length) {
           setSessions(updatedSessions);
         }
       } catch (err) {
-        // Silently fail on polling errors
         console.error('Auto-refresh failed:', err);
       }
     }, 3000);
@@ -187,6 +190,34 @@ export default function App() {
       e.preventDefault();
       handleSend();
     }
+  };
+
+  // Handle emergency stop - halt all operations immediately
+  const handleEmergencyStop = async () => {
+    console.log('[App] Emergency stop triggered');
+    
+    // Stop any active Floyd4 session
+    try {
+      await api.stopFloydChat();
+    } catch (err) {
+      console.error('[App] Error stopping Floyd4:', err);
+    }
+    
+    // Reset all streaming state
+    setIsStreaming(false);
+    setStreamingContent('');
+    streamingContentRef.current = '';
+    setActiveToolCalls([]);
+    
+    // Enter emergency mode
+    setEmergencyMode(true);
+    setStatusMessage('🚨 Emergency stop - Control transferred to you');
+    
+    // Exit emergency mode after 3 seconds
+    setTimeout(() => {
+      setEmergencyMode(false);
+      setStatusMessage('Ready');
+    }, 3000);
   };
 
   // Handle new session
@@ -287,6 +318,12 @@ export default function App() {
               {status === 'error' && <AlertCircle className="w-4 h-4" />}
               <span className="max-w-[200px] truncate">{statusMessage}</span>
             </div>
+            
+            {/* Export Chat Button */}
+            <ExportChatButton 
+              messages={messages} 
+              sessionTitle={currentSession?.title}
+            />
             
             <button
               onClick={() => setShowBrowork(true)}
@@ -440,6 +477,14 @@ export default function App() {
             </div>
           )}
           
+          {/* Thinking Terminal - shows AI reasoning in real-time */}
+          {isStreaming && thinkingContent && (
+            <ThinkingTerminal 
+              content={thinkingContent}
+              isStreaming={isStreaming}
+            />
+          )}
+          
           {/* Streaming message */}
           {isStreaming && streamingContent && (
             <ChatMessage 
@@ -449,7 +494,7 @@ export default function App() {
           )}
           
           {/* Loading indicator */}
-          {isStreaming && !streamingContent && activeToolCalls.length === 0 && (
+          {isStreaming && !streamingContent && !thinkingContent && activeToolCalls.length === 0 && (
             <div className="flex items-center gap-2 text-slate-400">
               <Loader2 className="w-5 h-5 animate-spin" />
               <span>Thinking...</span>
@@ -462,6 +507,11 @@ export default function App() {
         {/* Input */}
         <div className="border-t border-slate-700 p-4">
           <div className="flex gap-2">
+            {/* Emergency Stop - LEFT of input */}
+            <EmergencyStopButton
+              onStop={handleEmergencyStop}
+              isActive={emergencyMode}
+            />
             <textarea
               ref={inputRef}
               value={input}
