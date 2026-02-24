@@ -94,6 +94,7 @@ export function FileInput({ attachments, onAttachmentsChange, disabled }: FileIn
         ref={fileInputRef}
         type="file"
         multiple
+        accept={MIME_TYPES}
         onChange={(e) => handleFileSelect(e.target.files)}
         className="hidden"
       />

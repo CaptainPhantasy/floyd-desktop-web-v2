@@ -155,7 +155,7 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
 
 // Default settings - use General API for pay-as-you-go billing
 let settings: Settings = {
-  provider: 'anthropic-compatible',
+  provider: 'glm',
   apiKey: process.env.GLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || '',
   model: 'GLM-4-Plus',
   maxTokens: 16384,
@@ -313,11 +313,12 @@ function getAnthropicClient(): Anthropic | null {
 }
 
 function getOpenAIClient(): OpenAI | null {
-  if (!settings.apiKey || settings.provider !== 'openai') {
+  if (!settings.apiKey || (settings.provider !== 'openai' && settings.provider !== 'glm')) {
     return null;
   }
   return new OpenAI({
     apiKey: settings.apiKey,
+    baseURL: settings.provider === 'glm' ? settings.baseURL : undefined,
   });
 }
 
@@ -1885,23 +1886,40 @@ app.post('/api/chat/stream', async (req, res) => {
 
     for (const attachment of attachments) {
       if (attachment.type === 'image') {
-        contentBlocks.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: attachment.mimeType || 'image/jpeg',
-            data: attachment.data,
-          },
-        });
+        if (settings.provider === 'glm' || settings.provider === 'openai') {
+          // OpenAI/GLM format
+          contentBlocks.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${attachment.mimeType || 'image/jpeg'};base64,${attachment.data}`
+            }
+          });
+        } else {
+          // Anthropic format
+          contentBlocks.push({
+            type: 'image',
+            source: {
+              type: 'base64',
+              media_type: attachment.mimeType || 'image/jpeg',
+              data: attachment.data,
+            },
+          });
+        }
       } else if (attachment.type === 'document' || attachment.type === 'code') {
-        contentBlocks.push({
-          type: 'document',
-          source: {
-            type: 'base64',
-            media_type: attachment.mimeType || 'application/pdf',
-            data: attachment.data,
-          },
-        });
+        // Documents: for now, convert to text or skip (GLM may not support)
+        if (settings.provider === 'glm' || settings.provider === 'openai') {
+          // OpenAI doesn't have native document support, skip or convert
+          continue;
+        } else {
+          contentBlocks.push({
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: attachment.mimeType || 'application/pdf',
+              data: attachment.data,
+            },
+          });
+        }
       }
     }
 
