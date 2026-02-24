@@ -14,6 +14,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { config } from 'dotenv';
+import multer from 'multer';
 import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS, MCPClient, MCPManager } from './mcp-client.js';
 import { SkillsManager, Skill } from './skills-manager.js';
@@ -50,6 +51,25 @@ const __dirname = path.dirname(__filename);
 const app = express();
 app.use(cors());
 app.use(express.json());
+
+// Configure multer for file uploads
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 50 * 1024 * 1024,
+  },
+  fileFilter: (req, file, cb) => {
+    const allowedTypes = /jpeg|jpg|png|gif|webp|tiff|tif|pdf|doc|docx|txt|md|mp4|mov|webm|avi|js|ts|tsx|jsx|py|java|c|cpp|cs|go|rb|php|html|css|json|xml|yaml|yml|csv/;
+    const extname = allowedTypes.test(path.extname(file.originalname).toLowerCase());
+    const mimetype = allowedTypes.test(file.mimetype);
+
+    if (extname && mimetype) {
+      return cb(null, true);
+    } else {
+      cb(new Error('Invalid file type'));
+    }
+  },
+});
 
 // Serve static frontend files from dist/
 const distPath = path.join(__dirname, '../dist');
@@ -315,11 +335,11 @@ function getClient(): Anthropic | OpenAI | null {
 
 // Health check (basic) - Now shows Floyd4 as default
 app.get('/api/health', (req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     hasApiKey: !!settings.apiKey,
-    provider: 'floyd4',
-    model: 'glm-5',
+    provider: settings.provider,
+    model: settings.model,
     mode: 'floyd4',
     flags: FLOYD4_DEFAULT_FLAGS,
     floydConfig: {
@@ -506,6 +526,44 @@ app.post('/api/test-key', async (req, res) => {
     res.status(401).json({ 
       success: false, 
       error: error.message || 'Invalid API key' 
+    });
+  }
+});
+
+// File upload endpoint
+app.post('/api/upload', upload.array('files', 10), async (req, res) => {
+  try {
+    if (!req.files || req.files.length === 0) {
+      return res.status(400).json({ error: 'No files uploaded' });
+    }
+
+    const files = req.files as Express.Multer.File[];
+    const uploadedFiles = files.map(file => {
+      const fileType = file.mimetype.startsWith('image/') ? 'image' :
+                       file.mimetype.startsWith('video/') ? 'video' :
+                       file.mimetype.includes('pdf') || file.mimetype.includes('document') ? 'document' :
+                       file.mimetype.includes('text') || file.mimetype.includes('markdown') ? 'code' :
+                       'data';
+
+      return {
+        id: uuidv4(),
+        name: file.originalname,
+        size: file.size,
+        type: fileType,
+        mimeType: file.mimetype,
+        data: file.buffer.toString('base64'),
+      };
+    });
+
+    res.json({
+      success: true,
+      files: uploadedFiles,
+    });
+  } catch (error: any) {
+    console.error('[Server] Upload error:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message || 'Failed to upload files',
     });
   }
 });
@@ -1787,12 +1845,12 @@ function getOpenAITools() {
 
 // Send message (streaming with tool use) - supports both Anthropic and OpenAI
 app.post('/api/chat/stream', async (req, res) => {
-  const { sessionId, message, enableTools = true } = req.body;
-  
+  const { sessionId, message, enableTools = true, attachments = [] } = req.body;
+
   if (!settings.apiKey) {
     return res.status(400).json({ error: 'API key not configured' });
   }
-  
+
   let session = sessions.get(sessionId);
   if (!session) {
     session = {
@@ -1804,24 +1862,59 @@ app.post('/api/chat/stream', async (req, res) => {
     };
     sessions.set(session.id, session);
   }
-  
+
   // Set up SSE
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
-  
+
   // Build messages for API
   const apiMessages: any[] = [];
-  
+
   // Add existing session messages
   for (const m of session.messages) {
     if (m.role === 'user' || m.role === 'assistant') {
       apiMessages.push({ role: m.role, content: m.content });
     }
   }
-  
+
+  // Build content for new user message with attachments
+  let userContent: any = message;
+  if (attachments && attachments.length > 0) {
+    const contentBlocks: any[] = [];
+
+    for (const attachment of attachments) {
+      if (attachment.type === 'image') {
+        contentBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: attachment.mimeType || 'image/jpeg',
+            data: attachment.data,
+          },
+        });
+      } else if (attachment.type === 'document' || attachment.type === 'code') {
+        contentBlocks.push({
+          type: 'document',
+          source: {
+            type: 'base64',
+            media_type: attachment.mimeType || 'application/pdf',
+            data: attachment.data,
+          },
+        });
+      }
+    }
+
+    contentBlocks.push({
+      type: 'text',
+      text: message,
+    });
+
+    userContent = contentBlocks;
+  }
+
   // Add new user message
-  apiMessages.push({ role: 'user', content: message });
+  apiMessages.push({ role: 'user', content: userContent });
   session.messages.push({ role: 'user', content: message, timestamp: Date.now() });
   
   let fullResponse = '';

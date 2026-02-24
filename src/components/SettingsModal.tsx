@@ -23,20 +23,31 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
     { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Fast)' },
   ],
   'anthropic-compatible': [
-    { id: 'glm-4.7', name: 'GLM-4.7 (Standard, Complex Tasks)' },
-    { id: 'glm-4.5-air', name: 'GLM-4.5 Air (Lightweight, Faster)' },
-    { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
-    { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
-    { id: 'glm-4', name: 'GLM-4 (Standard)' },
-    { id: 'glm-4-air', name: 'GLM-4 Air (Fast)' },
-    { id: 'glm-4-airx', name: 'GLM-4 AirX (Faster)' },
-    { id: 'glm-4-long', name: 'GLM-4 Long (128K Context)' },
-    { id: 'glm-4-flash', name: 'GLM-4 Flash (Cheapest)' },
+    // GLM-5 Series (Latest)
+    { id: 'glm-5', name: 'GLM-5 (Latest, Most Capable)' },
+    // GLM-4.7 Series
+    { id: 'glm-4.7', name: 'GLM-4.7 (Complex Tasks)' },
+    { id: 'glm-4.7-flash', name: 'GLM-4.7-Flash (Fast)' },
+    { id: 'glm-4.7-flashx', name: 'GLM-4.7-FlashX (Fastest)' },
+    // GLM-4.6 Series
+    { id: 'glm-4.6', name: 'GLM-4.6' },
+    { id: 'glm-4.6v', name: 'GLM-4.6V (Vision)' },
+    { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash' },
+    { id: 'glm-4.6v-flashx', name: 'GLM-4.6V-FlashX' },
+    // GLM-4.5 Series
+    { id: 'glm-4.5', name: 'GLM-4.5' },
+    { id: 'glm-4.5v', name: 'GLM-4.5V (Vision)' },
+    { id: 'glm-4.5-air', name: 'GLM-4.5-Air (Lightweight)' },
+    { id: 'glm-4.5-airx', name: 'GLM-4.5-AirX (Faster)' },
+    { id: 'glm-4.5-flash', name: 'GLM-4.5-Flash' },
+    // GLM-4 Series
+    { id: 'glm-4-plus', name: 'GLM-4-Plus (High Concurrency)' },
+    { id: 'glm-4-32b-0414-128k', name: 'GLM-4-32B-128K (Long Context)' },
+    // Special
+    { id: 'glm-ocr', name: 'GLM-OCR (Text Extraction)' },
+    // Claude models via Z.ai
     { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet' },
     { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
-    { id: 'custom-model', name: 'Custom Model (specify in settings)' },
   ],
   openai: [
     { id: 'gpt-4o', name: 'GPT-4o (Recommended)' },
@@ -46,13 +57,26 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Cheapest)' },
   ],
   glm: [
-    { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
-    { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
-    { id: 'glm-4', name: 'GLM-4 (Standard)' },
-    { id: 'glm-4-air', name: 'GLM-4 Air (Fast)' },
-    { id: 'glm-4-airx', name: 'GLM-4 AirX (Faster)' },
-    { id: 'glm-4-long', name: 'GLM-4 Long (128K Context)' },
-    { id: 'glm-4-flash', name: 'GLM-4 Flash (Cheapest)' },
+    // GLM-5 Series (Latest)
+    { id: 'glm-5', name: 'GLM-5 (Latest, Most Capable)' },
+    // GLM-4.7 Series
+    { id: 'glm-4.7', name: 'GLM-4.7 (Complex Tasks)' },
+    { id: 'glm-4.7-flash', name: 'GLM-4.7-Flash (Fast)' },
+    { id: 'glm-4.7-flashx', name: 'GLM-4.7-FlashX (Fastest)' },
+    // GLM-4.6 Series
+    { id: 'glm-4.6', name: 'GLM-4.6' },
+    { id: 'glm-4.6v', name: 'GLM-4.6V (Vision)' },
+    { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash' },
+    { id: 'glm-4.6v-flashx', name: 'GLM-4.6V-FlashX' },
+    // GLM-4.5 Series
+    { id: 'glm-4.5', name: 'GLM-4.5' },
+    { id: 'glm-4.5v', name: 'GLM-4.5V (Vision)' },
+    { id: 'glm-4.5-air', name: 'GLM-4.5-Air (Lightweight)' },
+    { id: 'glm-4.5-airx', name: 'GLM-4.5-AirX (Faster)' },
+    { id: 'glm-4.5-flash', name: 'GLM-4.5-Flash' },
+    // GLM-4 Series
+    { id: 'glm-4-plus', name: 'GLM-4-Plus (High Concurrency)' },
+    { id: 'glm-4-32b-0414-128k', name: 'GLM-4-32B-128K (Long Context)' },
   ],
 };
 
@@ -64,6 +88,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   const [model, setModel] = useState('claude-sonnet-4-5-20250514');
   const [systemPrompt, setSystemPrompt] = useState('');
   const [maxTokens, setMaxTokens] = useState(16384);
+  const [temperature, setTemperature] = useState(0.1);
   const [baseURL, setBaseURL] = useState('');
   const [hasExistingKey, setHasExistingKey] = useState(false);
   const [keyPreview, setKeyPreview] = useState<string | null>(null);
@@ -82,6 +107,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
         setKeyPreview(settings.apiKeyPreview);
         setSystemPrompt(settings.systemPrompt || '');
         setMaxTokens(settings.maxTokens || 16384);
+        setTemperature(settings.temperature ?? 0.1);
         setBaseURL(settings.baseURL || '');
         setApiKey('');
         setTestResult(null);
@@ -125,7 +151,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   // Save settings
   const handleSave = async () => {
     setSaving(true);
-    
+
     try {
       await api.updateSettings({
         provider,
@@ -133,6 +159,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
         model,
         systemPrompt,
         maxTokens,
+        temperature,
         ...(provider === 'anthropic-compatible' && baseURL ? { baseURL } : {}),
       });
       onSave();
@@ -293,6 +320,29 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
                 </option>
               ))}
             </select>
+          </div>
+
+          {/* Temperature Slider */}
+          <div>
+            <label className="block text-sm font-medium text-slate-300 mb-2">
+              Temperature: {temperature.toFixed(2)}
+            </label>
+            <input
+              type="range"
+              min="0"
+              max="1"
+              step="0.01"
+              value={temperature}
+              onChange={(e) => setTemperature(parseFloat(e.target.value))}
+              className="w-full h-2 bg-slate-600 rounded-lg appearance-none cursor-pointer accent-sky-500"
+            />
+            <div className="flex justify-between text-xs text-slate-500 mt-1">
+              <span>🔧 Precise (0)</span>
+              <span>🎨 Creative (1)</span>
+            </div>
+            <p className="text-xs text-slate-500 mt-2">
+              Lower = more deterministic, precise code. Higher = more creative, varied responses.
+            </p>
           </div>
 
           {/* Max Tokens */}

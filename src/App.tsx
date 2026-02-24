@@ -16,9 +16,10 @@ import { BroworkPanel } from '@/components/BroworkPanel';
 import { EmergencyStopButton } from '@/components/EmergencyStopButton';
 import { ThinkingTerminal } from '@/components/ThinkingTerminal';
 import { ExportChatButton } from '@/components/ExportChatButton';
-import { 
-  Settings as SettingsIcon, 
-  Send, 
+import { FileInput } from '@/components/FileInput';
+import {
+  Settings as SettingsIcon,
+  Send,
   Loader2,
   AlertCircle,
   CheckCircle2,
@@ -28,14 +29,22 @@ import {
   Users
 } from 'lucide-react';
 
+interface FileAttachment {
+  id: string;
+  file: File;
+  preview?: string;
+  type: 'image' | 'video' | 'document' | 'code' | 'data';
+}
+
 export default function App() {
   const api = useApi();
-  
+
   // State
   const [sessions, setSessions] = useState<Session[]>([]);
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [attachments, setAttachments] = useState<FileAttachment[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
   const [_settings, setSettings] = useState<Settings | null>(null);
@@ -55,7 +64,9 @@ export default function App() {
   }>>([]);
   const [emergencyMode, setEmergencyMode] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
-  
+  const [chatMode, setChatMode] = useState<'floyd4' | 'streaming'>('floyd4');
+  const [showModeAlert, setShowModeAlert] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const streamingContentRef = useRef<string>('');
@@ -143,41 +154,105 @@ export default function App() {
   // Handle send message - using Floyd4 harness
   const handleSend = async () => {
     if (!input.trim() || isStreaming || !currentSession) return;
-    
+
+    // Check if attachments require streaming mode
+    if (attachments.length > 0 && chatMode === 'floyd4') {
+      setShowModeAlert(true);
+      return;
+    }
+
     const userMessage: Message = {
       role: 'user',
       content: input.trim(),
       timestamp: Date.now(),
     };
-    
+
     setMessages(prev => [...prev, userMessage]);
     setInput('');
     setIsStreaming(true);
     setStreamingContent('');
     streamingContentRef.current = '';
     setActiveToolCalls([]);
-    
+
     try {
-      // Use Floyd4 harness instead of legacy streaming
-      const result = await api.sendFloydMessage(userMessage.content);
-      
-      // Add the response as a message
-      if (result.output) {
-        setMessages(prev => [...prev, {
-          role: 'assistant',
-          content: result.output,
-          timestamp: Date.now(),
-        }]);
+      let uploadedAttachments: Array<{
+        id: string;
+        name: string;
+        size: number;
+        type: 'image' | 'video' | 'document' | 'code' | 'data';
+        mimeType: string;
+        data: string;
+      }> = [];
+
+      if (attachments.length > 0) {
+        const uploadResult = await api.uploadFiles(attachments.map(a => a.file));
+        if (uploadResult.success) {
+          uploadedAttachments = uploadResult.files;
+        }
+        setAttachments([]);
       }
-      
-      setStreamingContent('');
-      streamingContentRef.current = '';
-      setIsStreaming(false);
-      setActiveToolCalls([]);
-      
-      // Refresh sessions list
-      const sessionList = await api.getSessions();
-      setSessions(sessionList);
+
+      if (chatMode === 'streaming') {
+        await api.sendMessageStream(
+          currentSession.id,
+          userMessage.content,
+          (text) => {
+            streamingContentRef.current += text;
+            setStreamingContent(streamingContentRef.current);
+          },
+          async (usage, sessionId) => {
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: streamingContentRef.current,
+              timestamp: Date.now(),
+            }]);
+            setStreamingContent('');
+            streamingContentRef.current = '';
+            setIsStreaming(false);
+            setActiveToolCalls([]);
+
+            const sessionList = await api.getSessions();
+            setSessions(sessionList);
+          },
+          (error) => {
+            setStatusMessage(`Error: ${error}`);
+            setIsStreaming(false);
+            setStreamingContent('');
+            streamingContentRef.current = '';
+          },
+          (tool, args, id) => {
+            setActiveToolCalls(prev => [...prev, {
+              id,
+              tool,
+              args,
+              isExecuting: true,
+            }]);
+          },
+          (tool, id, result, success) => {
+            setActiveToolCalls(prev => prev.map(tc =>
+              tc.id === id ? { ...tc, result, success, isExecuting: false } : tc
+            ));
+          }
+        );
+      } else {
+        const result = await api.sendFloydMessage(userMessage.content);
+
+        if (result.output) {
+          setMessages(prev => [...prev, {
+            role: 'assistant',
+            content: result.output,
+            timestamp: Date.now(),
+          }]);
+        }
+
+        setStreamingContent('');
+        streamingContentRef.current = '';
+        setIsStreaming(false);
+        setActiveToolCalls([]);
+
+        const sessionList = await api.getSessions();
+        setSessions(sessionList);
+      }
     } catch (err: any) {
       setStatusMessage(`Error: ${err.message}`);
       setIsStreaming(false);
@@ -506,40 +581,63 @@ export default function App() {
 
         {/* Input */}
         <div className="border-t border-slate-700 p-4">
-          <div className="flex gap-2">
-            {/* Emergency Stop - LEFT of input */}
-            <EmergencyStopButton
-              onStop={handleEmergencyStop}
-              isActive={emergencyMode}
-            />
-            <textarea
-              ref={inputRef}
-              value={input}
-              onChange={(e) => setInput(e.target.value)}
-              onKeyDown={handleKeyPress}
-              placeholder={status === 'ready' ? 'Type a message...' : 'Configure API key in settings...'}
-              disabled={status !== 'ready' || isStreaming}
-              className={cn(
-                'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3',
-                'resize-none focus:outline-none focus:ring-2 focus:ring-sky-500',
-                'placeholder:text-slate-500 disabled:opacity-50',
-              )}
-              rows={1}
-            />
-            <button
-              onClick={handleSend}
-              disabled={!input.trim() || status !== 'ready' || isStreaming}
-              className={cn(
-                'px-4 py-2 bg-sky-600 rounded-lg transition-colors',
-                'hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed',
-              )}
-            >
-              {isStreaming ? (
-                <Loader2 className="w-5 h-5 animate-spin" />
-              ) : (
-                <Send className="w-5 h-5" />
-              )}
-            </button>
+          <div className="flex flex-col gap-2">
+            {/* File attachments preview */}
+            {attachments.length > 0 && (
+              <div className="px-2">
+                <FileInput
+                  attachments={attachments}
+                  onAttachmentsChange={setAttachments}
+                  disabled={status !== 'ready' || isStreaming}
+                />
+              </div>
+            )}
+
+            <div className="flex gap-2">
+              {/* Emergency Stop - LEFT of input */}
+              <EmergencyStopButton
+                onStop={handleEmergencyStop}
+                isActive={emergencyMode}
+              />
+
+              {/* File Input Button */}
+              <div className="flex items-start">
+                <FileInput
+                  attachments={attachments}
+                  onAttachmentsChange={setAttachments}
+                  disabled={status !== 'ready' || isStreaming}
+                />
+              </div>
+
+              <textarea
+                ref={inputRef}
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyDown={handleKeyPress}
+                placeholder={status === 'ready' ? 'Type a message...' : 'Configure API key in settings...'}
+                disabled={status !== 'ready' || isStreaming}
+                className={cn(
+                  'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3',
+                  'resize-none focus:outline-none focus:ring-2 focus:ring-sky-500',
+                  'placeholder:text-slate-500 disabled:opacity-50',
+                )}
+                rows={1}
+              />
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || status !== 'ready' || isStreaming}
+                className={cn(
+                  'px-4 py-2 bg-sky-600 rounded-lg transition-colors',
+                  'hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed',
+                )}
+              >
+                {isStreaming ? (
+                  <Loader2 className="w-5 h-5 animate-spin" />
+                ) : (
+                  <Send className="w-5 h-5" />
+                )}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -550,24 +648,99 @@ export default function App() {
         onClose={() => setShowSettings(false)}
         onSave={handleSettingsSave}
       />
-      
+
       {/* Skills Panel */}
       <SkillsPanel
         isOpen={showSkills}
         onClose={() => setShowSkills(false)}
       />
-      
+
       {/* Projects Panel */}
       <ProjectsPanel
         isOpen={showProjects}
         onClose={() => setShowProjects(false)}
       />
-      
+
       {/* Browork Panel */}
       <BroworkPanel
         isOpen={showBrowork}
         onClose={() => setShowBrowork(false)}
       />
+
+      {/* Mode Switch Alert */}
+      {showModeAlert && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-slate-800 rounded-lg border border-slate-700 max-w-md w-full p-6 shadow-xl">
+            <div className="flex items-start gap-3 mb-4">
+              <AlertCircle className="w-6 h-6 text-yellow-400 flex-shrink-0 mt-0.5" />
+              <div>
+                <h3 className="text-lg font-semibold text-white mb-2">
+                  Vision Mode Required
+                </h3>
+                <p className="text-sm text-slate-300 mb-4">
+                  You've attached files that require vision capabilities (images, documents).
+                  Floyd4 doesn't support file attachments. Switch to streaming mode to use vision features with Claude.
+                </p>
+                <div className="bg-slate-900/50 rounded p-3 mb-4 text-xs space-y-1">
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <span className="text-red-400">✕</span> Floyd4 Mode: CLI-based, no vision support
+                  </div>
+                  <div className="flex items-center gap-2 text-slate-400">
+                    <span className="text-green-400">✓</span> Streaming Mode: Full API access, vision support
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => {
+                  setChatMode('streaming');
+                  setShowModeAlert(false);
+                  setStatusMessage('Switched to Streaming Mode (Vision Enabled)');
+                  setTimeout(() => handleSend(), 100);
+                }}
+                className="flex-1 px-4 py-2 bg-sky-600 hover:bg-sky-700 text-white rounded-lg transition-colors font-medium"
+              >
+                Switch to Streaming Mode
+              </button>
+              <button
+                onClick={() => {
+                  setShowModeAlert(false);
+                  setAttachments([]);
+                }}
+                className="flex-1 px-4 py-2 bg-slate-700 hover:bg-slate-600 text-white rounded-lg transition-colors"
+              >
+                Remove Attachments
+              </button>
+            </div>
+
+            <button
+              onClick={() => setShowModeAlert(false)}
+              className="w-full mt-2 px-4 py-2 text-slate-400 hover:text-slate-300 text-sm transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Mode Indicator Badge */}
+      {chatMode === 'streaming' && (
+        <div className="fixed bottom-20 right-6 bg-sky-600/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full text-xs font-medium shadow-lg flex items-center gap-2">
+          <CheckCircle2 className="w-3 h-3" />
+          Streaming Mode (Vision Enabled)
+          <button
+            onClick={() => {
+              setChatMode('floyd4');
+              setStatusMessage('Switched back to Floyd4 Mode');
+            }}
+            className="ml-1 hover:bg-white/20 rounded px-1.5 py-0.5 transition-colors"
+          >
+            Switch Back
+          </button>
+        </div>
+      )}
     </div>
   );
 }

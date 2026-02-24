@@ -354,6 +354,35 @@ export function useApi() {
     });
   }, [fetchJson]);
 
+  const uploadFiles = useCallback(async (files: File[]) => {
+    const formData = new FormData();
+    files.forEach(file => {
+      formData.append('files', file);
+    });
+
+    const response = await fetch(`${API_BASE}/upload`, {
+      method: 'POST',
+      body: formData,
+    });
+
+    if (!response.ok) {
+      const data = await response.json().catch(() => ({}));
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    return response.json() as Promise<{
+      success: boolean;
+      files: Array<{
+        id: string;
+        name: string;
+        size: number;
+        type: 'image' | 'video' | 'document' | 'code' | 'data';
+        mimeType: string;
+        data: string;
+      }>;
+    }>;
+  }, []);
+
   return {
     loading,
     error,
@@ -370,6 +399,7 @@ export function useApi() {
     sendMessageStream,
     getTools,
     executeTool,
+    uploadFiles,
     // Floyd4 methods
     getFloydConfig,
     startFloydChat,
