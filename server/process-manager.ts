@@ -242,6 +242,33 @@ export class ProcessManager extends EventEmitter {
   }
 
   /**
+   * Get session status by ID
+   */
+  getSessionStatus(sessionId: string): {
+    id: string;
+    pid: number;
+    command: string;
+    cwd: string;
+    isRunning: boolean;
+    runtime: number;
+    exitCode: number | null;
+  } | null {
+    const session = this.sessions.get(sessionId);
+    if (!session) {
+      return null;
+    }
+    return {
+      id: session.id,
+      pid: session.pid,
+      command: session.command,
+      cwd: session.cwd,
+      isRunning: session.isRunning,
+      runtime: Date.now() - session.startTime,
+      exitCode: session.exitCode,
+    };
+  }
+
+  /**
    * List system processes
    */
   async listProcesses(): Promise<ProcessInfo[]> {

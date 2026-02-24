@@ -34,7 +34,7 @@ export function buildSuggestedSystemPrompt(config: SuggestedPromptConfig = {}): 
 		agentName = 'Floyd-Desktop',
 		workingDirectory = process.cwd(),
 		projectContext = null,
-		maxTurns = 20,
+		maxTurns = 50,
 	} = config;
 
 	// ============================================================================

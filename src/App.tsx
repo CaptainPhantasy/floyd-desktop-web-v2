@@ -137,7 +137,7 @@ export default function App() {
     return () => clearInterval(interval);
   }, [status, currentSession, isStreaming, messages.length, sessions.length, api]);
 
-  // Handle send message
+  // Handle send message - using Floyd4 harness
   const handleSend = async () => {
     if (!input.trim() || isStreaming || !currentSession) return;
     
@@ -155,59 +155,26 @@ export default function App() {
     setActiveToolCalls([]);
     
     try {
-      await api.sendMessageStream(
-        currentSession.id,
-        userMessage.content,
-        // onText
-        (text) => {
-          streamingContentRef.current += text;
-          setStreamingContent(streamingContentRef.current);
-        },
-        // onDone
-        async (usage, sessionId) => {
-          const fullContent = streamingContentRef.current;
-          if (fullContent) {
-            setMessages(prev => [...prev, {
-              role: 'assistant',
-              content: fullContent,
-              timestamp: Date.now(),
-            }]);
-          }
-          setStreamingContent('');
-          streamingContentRef.current = '';
-          setIsStreaming(false);
-          setActiveToolCalls([]);
-          
-          // Refresh sessions list
-          const sessionList = await api.getSessions();
-          setSessions(sessionList);
-        },
-        // onError
-        (error) => {
-          setStatusMessage(`Error: ${error}`);
-          setIsStreaming(false);
-          setStreamingContent('');
-          streamingContentRef.current = '';
-          setActiveToolCalls([]);
-        },
-        // onToolCall
-        (tool, args, id) => {
-          setActiveToolCalls(prev => [...prev, {
-            id,
-            tool,
-            args,
-            isExecuting: true,
-          }]);
-        },
-        // onToolResult
-        (tool, id, result, success) => {
-          setActiveToolCalls(prev => prev.map(tc => 
-            tc.id === id 
-              ? { ...tc, result, success, isExecuting: false }
-              : tc
-          ));
-        }
-      );
+      // Use Floyd4 harness instead of legacy streaming
+      const result = await api.sendFloydMessage(userMessage.content);
+      
+      // Add the response as a message
+      if (result.output) {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: result.output,
+          timestamp: Date.now(),
+        }]);
+      }
+      
+      setStreamingContent('');
+      streamingContentRef.current = '';
+      setIsStreaming(false);
+      setActiveToolCalls([]);
+      
+      // Refresh sessions list
+      const sessionList = await api.getSessions();
+      setSessions(sessionList);
     } catch (err: any) {
       setStatusMessage(`Error: ${err.message}`);
       setIsStreaming(false);

@@ -46,8 +46,8 @@ export interface BroworkConfig {
 
 const DEFAULT_CONFIG: BroworkConfig = {
   maxConcurrentAgents: 3,
-  maxToolCallsPerAgent: 20,
-  agentTimeout: 5 * 60 * 1000,
+  maxToolCallsPerAgent: 60, // Increased from 20 for more complex tasks
+  agentTimeout: 15 * 60 * 1000, // Increased from 5min to 15min for complex tasks
 };
 
 export class BroworkManager {
@@ -70,6 +70,20 @@ export class BroworkManager {
   setProvider(provider: Provider) { this.provider = provider; }
   setConfig(config: Partial<BroworkConfig>) { this.config = { ...this.config, ...config }; }
   setUpdateCallback(cb: (task: AgentTask) => void) { this.onUpdate = cb; }
+  
+  // Get count of active tasks
+  getActiveCount(): number {
+    let count = 0;
+    for (const task of this.tasks.values()) {
+      if (task.status === 'running') count++;
+    }
+    return count;
+  }
+  
+  // Get all tasks
+  getAllTasks(): AgentTask[] {
+    return Array.from(this.tasks.values());
+  }
 
   createTask(name: string, description: string): AgentTask {
     const task: AgentTask = {
@@ -214,7 +228,7 @@ Work step by step and complete the task.`;
     ];
 
     let toolCallCount = 0;
-    const maxTurns = 15;
+    const maxTurns = 40; // Increased from 15 for better task completion
 
     for (let turn = 0; turn < maxTurns && task.status === 'running'; turn++) {
       if (Date.now() - task.started! > this.config.agentTimeout) {
@@ -299,7 +313,7 @@ Work step by step and complete the task.`;
     ];
 
     let toolCallCount = 0;
-    const maxTurns = 15;
+    const maxTurns = 40; // Increased from 15 for better task completion
 
     for (let turn = 0; turn < maxTurns && task.status === 'running'; turn++) {
       if (Date.now() - task.started! > this.config.agentTimeout) {

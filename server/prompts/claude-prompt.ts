@@ -32,7 +32,7 @@ export function buildClaudeSystemPrompt(config: ClaudePromptConfig = {}): string
 		agentName = 'Claude',
 		workingDirectory = process.cwd(),
 		projectContext = null,
-		maxTurns = 20,
+		maxTurns = 50,
 		enableChainOfThought = true,
 	} = config;
 

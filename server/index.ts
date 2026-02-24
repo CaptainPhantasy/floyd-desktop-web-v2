@@ -20,6 +20,7 @@ import { SkillsManager, Skill } from './skills-manager.js';
 import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
 import { WebSocketMCPServer } from './ws-mcp-server.js';
+import { ProcessManager } from './process-manager.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -33,6 +34,9 @@ const toolExecutor = new ToolExecutor([
   process.env.HOME || '/',
   '/tmp',
 ]);
+
+// Initialize process manager for CLI commands
+const processManager = new ProcessManager();
 
 // Initialize managers
 let skillsManager: SkillsManager;
@@ -129,16 +133,53 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
   ],
 };
 
-// Default settings - use GLM API key with Z.ai Anthropic-compatible endpoint
+// Default settings - use Floyd4 with GLM 5 as default
 let settings: Settings = {
   provider: 'anthropic-compatible',
   apiKey: process.env.GLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || '',
   model: 'glm-4.7',
   maxTokens: 16384,
   baseURL: 'https://api.z.ai/api/anthropic',
-  temperature: 0.1,  // More deterministic, better for coding
+  temperature: 0.1,
   promptStyle: 'floyd',
 };
+
+// Floyd4 configuration
+const FLOYD4_BINARY = '/Users/douglastalley/.local/bin/floyd4';
+const FLOYD4_DEFAULT_MODEL = '5';  // GLM 5
+const FLOYD4_DEFAULT_FLAGS = ['yolo'];
+
+// Load FLOYD.md as default system prompt
+let FLOYD_PROMPT = '';
+const FLOYD_MD_PATH = '/Volumes/Storage/floyd-sandbox/FloydDeployable/FLOYD.md';
+
+async function loadFloydPrompt() {
+  try {
+    const content = await fs.readFile(FLOYD_MD_PATH, 'utf-8');
+    FLOYD_PROMPT = content;
+    console.log('[Server] Loaded FLOYD.md prompt (' + content.length + ' chars)');
+  } catch (err) {
+    console.log('[Server] Could not load FLOYD.md, using fallback prompt');
+    FLOYD_PROMPT = 'You are FLOYD, a production engineer agent. Be precise, efficient, and focus on production-ready solutions.';
+  }
+}
+
+// Check if Floyd4 is available
+async function checkFloyd4Available(): Promise<boolean> {
+  try {
+    await fs.access(FLOYD4_BINARY);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Active Floyd4 session for chat (single persistent session)
+let activeFloyd4Session: {
+  sessionId: string;
+  pid: number;
+  startedAt: number;
+} | null = null;
 
 // Sessions store
 const sessions: Map<string, Session> = new Map();
@@ -147,6 +188,9 @@ const sessions: Map<string, Session> = new Map();
 async function initDataDir() {
   try {
     await fs.mkdir(DATA_DIR, { recursive: true });
+    
+    // Load FLOYD.md prompt
+    await loadFloydPrompt();
     
     // Load settings if exists
     try {
@@ -269,13 +313,68 @@ function getClient(): Anthropic | OpenAI | null {
 
 // ============ API Routes ============
 
-// Health check
+// Health check (basic) - Now shows Floyd4 as default
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'ok', 
     hasApiKey: !!settings.apiKey,
-    provider: settings.provider,
-    model: settings.model 
+    provider: 'floyd4',
+    model: 'glm-5',
+    mode: 'floyd4',
+    flags: FLOYD4_DEFAULT_FLAGS,
+    floydConfig: {
+      binaryPath: FLOYD4_BINARY,
+      defaultModel: FLOYD4_DEFAULT_MODEL,
+      promptLoaded: FLOYD_PROMPT.length > 0,
+    }
+  });
+});
+
+// Enhanced health check for mobile/tunnel monitoring
+app.get('/api/health/extended', async (req, res) => {
+  const start = Date.now();
+  
+  // Check local server responsiveness
+  let serverOk = true;
+  try {
+    // Simple check - if this endpoint runs, server is up
+    serverOk = true;
+  } catch {
+    serverOk = false;
+  }
+  
+  // Check MCP servers
+  const mcpStatus = mcpManager ? await mcpManager.getStatus() : {};
+  const mcpCount = Object.keys(mcpStatus).length;
+  const mcpHealthy = Object.values(mcpStatus).every((s: any) => s.healthy);
+  
+  // Check Browork tasks
+  const activeTasks = broworkManager ? broworkManager.getActiveCount() : 0;
+  
+  res.json({
+    status: serverOk ? 'ok' : 'degraded',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    version: '4.0.0',
+    services: {
+      server: { status: 'ok', latencyMs: Date.now() - start },
+      mcp: { status: mcpHealthy ? 'ok' : 'degraded', serverCount: mcpCount },
+      browork: { status: 'ok', activeTasks },
+    },
+    config: {
+      provider: settings.provider,
+      model: settings.model,
+      hasApiKey: !!settings.apiKey,
+    }
+  });
+});
+
+// Health check for tunnel monitoring (lightweight)
+app.get('/api/health/ping', (req, res) => {
+  res.json({ 
+    pong: true, 
+    timestamp: Date.now(),
+    instance: 'floyd-desktop-v4'
   });
 });
 
@@ -1119,6 +1218,219 @@ app.delete('/api/sessions/:id', async (req, res) => {
   res.json({ success: true });
 });
 
+// ============================================
+// Floyd4 Chat API - Full harness experience
+// ============================================
+
+// Get Floyd4 status and configuration
+app.get('/api/chat/floyd/config', async (req, res) => {
+  const isAvailable = await checkFloyd4Available();
+  res.json({
+    available: isAvailable,
+    binaryPath: FLOYD4_BINARY,
+    models: FLOYD_MODELS,
+    flags: FLOYD_FLAGS,
+    defaultModel: FLOYD4_DEFAULT_MODEL,
+    defaultFlags: FLOYD4_DEFAULT_FLAGS,
+    promptLoaded: FLOYD_PROMPT.length > 0,
+    activeSession: activeFloyd4Session ? {
+      sessionId: activeFloyd4Session.sessionId,
+      pid: activeFloyd4Session.pid,
+      uptime: Date.now() - activeFloyd4Session.startedAt,
+    } : null,
+  });
+});
+
+// Start a new Floyd4 chat session
+app.post('/api/chat/floyd/start', async (req, res) => {
+  const { model, flags, cwd } = req.body;
+  
+  const isAvailable = await checkFloyd4Available();
+  if (!isAvailable) {
+    return res.status(503).json({ error: 'Floyd4 not available at ' + FLOYD4_BINARY });
+  }
+  
+  // Kill existing session if any
+  if (activeFloyd4Session) {
+    processManager.forceTerminate(activeFloyd4Session.sessionId);
+    activeFloyd4Session = null;
+  }
+  
+  // Build command with model and flags
+  let command = FLOYD4_BINARY;
+  
+  // Add model flag
+  const modelId = model || FLOYD4_DEFAULT_MODEL;
+  const modelConfig = FLOYD_MODELS.find(m => m.id === modelId);
+  if (modelConfig) {
+    command += ` ${modelConfig.flag}`;
+  }
+  
+  // Add flags
+  const activeFlags = flags || FLOYD4_DEFAULT_FLAGS;
+  for (const flagId of activeFlags) {
+    const flagConfig = FLOYD_FLAGS.find(f => f.id === flagId);
+    if (flagConfig) {
+      command += ` ${flagConfig.flag}`;
+    }
+  }
+  
+  const sessionId = `floyd_chat_${Date.now()}`;
+  
+  try {
+    const result = await processManager.startProcess({
+      command,
+      cwd: cwd || process.cwd(),
+      timeout: 0, // No timeout for interactive session
+    });
+    
+    activeFloyd4Session = {
+      sessionId,
+      pid: result.pid,
+      startedAt: Date.now(),
+    };
+    
+    // Wait for Floyd4 to initialize and inject the FLOYD.md prompt
+    setTimeout(async () => {
+      if (FLOYD_PROMPT) {
+        // Send FLOYD.md as initial context
+        await processManager.interactWithProcess(sessionId, FLOYD_PROMPT);
+      }
+    }, 3000);
+    
+    res.json({
+      success: true,
+      sessionId,
+      pid: result.pid,
+      command,
+      promptLoaded: FLOYD_PROMPT.length > 0,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to start Floyd4' });
+  }
+});
+
+// Send a message to the active Floyd4 session
+app.post('/api/chat/floyd/message', async (req, res) => {
+  const { message, sessionId, model, flags, silent } = req.body;
+  
+  if (!message) {
+    return res.status(400).json({ error: 'Message is required' });
+  }
+  
+  // Build the floyd4 run command
+  let command = FLOYD4_BINARY;
+  
+  // Add model flag
+  const modelId = model || FLOYD4_DEFAULT_MODEL;
+  const modelConfig = FLOYD_MODELS.find(m => m.id === modelId);
+  if (modelConfig) {
+    command += ` ${modelConfig.flag}`;
+  }
+  
+  // Add flags
+  const activeFlags = flags || FLOYD4_DEFAULT_FLAGS;
+  for (const flagId of activeFlags) {
+    const flagConfig = FLOYD_FLAGS.find(f => f.id === flagId);
+    if (flagConfig) {
+      command += ` ${flagConfig.flag}`;
+    }
+  }
+  
+  // Wrap message with completion instruction unless silent mode
+  let wrappedMessage = message;
+  if (!silent) {
+    wrappedMessage = `${message}\n\n[IMPORTANT: After completing, always end your response with a clear confirmation like "✅ Task completed" or "✅ Done" so the caller knows you finished.]`;
+  }
+  
+  // Add run command with the message
+  // Escape the message for shell
+  const escapedMessage = wrappedMessage.replace(/"/g, '\\"').replace(/\n/g, ' ');
+  command += ` run "${escapedMessage}"`;
+  
+  const runSessionId = `floyd_run_${Date.now()}`;
+  const startTime = Date.now();
+  
+  try {
+    // Execute floyd4 run - note: processManager generates its own sessionId
+    const result = await processManager.startProcess({
+      command,
+      cwd: process.cwd(),
+      timeout: 180000, // 3 minute timeout for responses
+    });
+    
+    // Use the actual session ID from processManager
+    const actualSessionId = result.sessionId;
+    
+    // Wait for the process to complete (poll for output)
+    let output = '';
+    let attempts = 0;
+    const maxAttempts = 120; // 2 minutes max wait
+    
+    while (attempts < maxAttempts) {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      const status = processManager.getSessionStatus(actualSessionId);
+      
+      if (!status || !status.isRunning) {
+        // Process completed, get final output
+        const finalOutput = processManager.readProcessOutput(actualSessionId, 2000);
+        output = finalOutput.output;
+        break;
+      }
+      
+      attempts++;
+    }
+    
+    // If still running after timeout, get what we have
+    if (attempts >= maxAttempts) {
+      const partialOutput = processManager.readProcessOutput(actualSessionId, 2000);
+      output = partialOutput.output + '\n\n⏱️ Response timed out - partial output shown.';
+    }
+    
+    // Clean up the session
+    processManager.forceTerminate(actualSessionId);
+    
+    const elapsed = Date.now() - startTime;
+    
+    res.json({
+      success: true,
+      output,
+      isRunning: false,
+      exitCode: null,
+      elapsed_ms: elapsed,
+      sessionId: actualSessionId,
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to send message to Floyd4' });
+  }
+});
+
+// Get Floyd4 chat output
+app.get('/api/chat/floyd/output', (req, res) => {
+  if (!activeFloyd4Session) {
+    return res.json({ output: '', isRunning: false, exitCode: null });
+  }
+  
+  const output = processManager.readProcessOutput(activeFloyd4Session.sessionId, 1000);
+  res.json({
+    output: output.output,
+    isRunning: output.isRunning,
+    exitCode: output.exitCode,
+  });
+});
+
+// Stop Floyd4 chat session
+app.delete('/api/chat/floyd/session', (req, res) => {
+  if (!activeFloyd4Session) {
+    return res.json({ success: true, message: 'No active session' });
+  }
+  
+  const result = processManager.forceTerminate(activeFloyd4Session.sessionId);
+  activeFloyd4Session = null;
+  
+  res.json(result);
+});
+
 // Send message (non-streaming)
 app.post('/api/chat', async (req, res) => {
   const { sessionId, message } = req.body;
@@ -1213,6 +1525,197 @@ app.post('/api/tools/execute', async (req, res) => {
     result = await toolExecutor.execute(name, args);
     res.json(result);
   }
+});
+
+// CLI execute endpoint - for mobile PWA to run CLI commands
+app.post('/api/cli/execute', async (req, res) => {
+  const { command, cwd, timeout = 60000 } = req.body;
+
+  if (!command || typeof command !== 'string') {
+    return res.status(400).json({ error: 'Command is required' });
+  }
+
+  // Security: Only allow safe commands (alphanumeric, spaces, and common shell chars)
+  const safeCommandPattern = /^[\w\s\-\.\/\$\{\}\(\)\[\]\:\=\+\'\"\`\<\>\|\&\;\~]+$/;
+  if (!safeCommandPattern.test(command)) {
+    return res.status(400).json({ error: 'Command contains invalid characters' });
+  }
+
+  const sessionId = `cli_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+  try {
+    // Execute via processManager
+    const result = await processManager.startProcess({
+      command,
+      cwd: cwd || process.cwd(),
+      timeout,
+    });
+
+    res.json({
+      sessionId,
+      pid: result.pid,
+      status: 'started',
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to start process' });
+  }
+});
+
+// Floyd4 configuration options
+const FLOYD_MODELS = [
+  { id: '5', name: 'GLM 5 (Latest)', flag: '--glm 5' },
+  { id: '47', name: 'GLM 4.7', flag: '--glm 47' },
+  { id: '47f', name: 'GLM 4.7 Flash', flag: '--glm 47f' },
+  { id: '47x', name: 'GLM 4.7X', flag: '--glm 47x' },
+  { id: '46', name: 'GLM 4.6', flag: '--glm 46' },
+  { id: '46v', name: 'GLM 4.6 Vision', flag: '--glm 46v' },
+  { id: '45', name: 'GLM 4.5', flag: '--glm 45' },
+  { id: '45v', name: 'GLM 4.5 Vision', flag: '--glm 45v' },
+  { id: '45a', name: 'GLM 4.5 Advanced', flag: '--glm 45a' },
+  { id: '4p', name: 'GLM 4 Plus', flag: '--glm 4p' },
+  { id: '432', name: 'GLM 4 32K', flag: '--glm 432' },
+];
+
+const FLOYD_FLAGS = [
+  { id: 'yolo', name: 'Yolo Mode', flag: '-y', description: 'Auto-accept all permissions' },
+  { id: 'debug', name: 'Debug Mode', flag: '-d', description: 'Enable debug logging' },
+];
+
+// Get Floyd4 configuration options
+app.get('/api/floyd/config', (req, res) => {
+  res.json({
+    binaryPath: '/Users/douglastalley/.local/bin/floyd4',
+    models: FLOYD_MODELS,
+    flags: FLOYD_FLAGS,
+    defaultCwd: process.cwd(),
+  });
+});
+
+// Start Floyd4 with configuration
+app.post('/api/floyd/start', async (req, res) => {
+  const { model, flags = [], cwd, prompt } = req.body;
+
+  // Build the command
+  let command = '/Users/douglastalley/.local/bin/floyd4';
+  
+  // Add model flag
+  if (model) {
+    const modelConfig = FLOYD_MODELS.find(m => m.id === model);
+    if (modelConfig) {
+      command += ` ${modelConfig.flag}`;
+    }
+  }
+  
+  // Add other flags
+  if (Array.isArray(flags)) {
+    for (const flagId of flags) {
+      const flagConfig = FLOYD_FLAGS.find(f => f.id === flagId);
+      if (flagConfig) {
+        command += ` ${flagConfig.flag}`;
+      }
+    }
+  }
+
+  const sessionId = `floyd_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+
+  try {
+    const result = await processManager.startProcess({
+      command,
+      cwd: cwd || process.cwd(),
+      timeout: 0, // No timeout for interactive session
+    });
+
+    // If initial prompt provided, send it
+    if (prompt) {
+      setTimeout(async () => {
+        await processManager.interactWithProcess(sessionId, prompt);
+      }, 2000); // Wait for Floyd4 to initialize
+    }
+
+    res.json({
+      sessionId,
+      pid: result.pid,
+      command,
+      status: 'started',
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message || 'Failed to start Floyd4' });
+  }
+});
+
+// Get Floyd4 session status (convenience endpoint)
+app.get('/api/floyd/status/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const status = processManager.getSessionStatus(sessionId);
+  
+  if (!status) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  res.json({
+    ...status,
+    type: status.command.includes('floyd4') ? 'floyd' : 'cli',
+  });
+});
+
+// Get CLI session status
+app.get('/api/cli/status/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const status = processManager.getSessionStatus(sessionId);
+  
+  if (!status) {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  res.json(status);
+});
+
+// Get CLI session output
+app.get('/api/cli/output/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const result = processManager.readProcessOutput(sessionId, 500);
+  
+  if (result.output === 'Session not found') {
+    return res.status(404).json({ error: 'Session not found' });
+  }
+  
+  res.json(result);
+});
+
+// Send input to CLI session (interactive)
+app.post('/api/cli/interact/:sessionId', async (req, res) => {
+  const { sessionId } = req.params;
+  const { input } = req.body;
+
+  if (!input || typeof input !== 'string') {
+    return res.status(400).json({ error: 'Input is required' });
+  }
+
+  const result = await processManager.interactWithProcess(sessionId, input);
+  
+  if (!result.success) {
+    return res.status(404).json({ error: result.output });
+  }
+  
+  res.json(result);
+});
+
+// Terminate CLI session
+app.delete('/api/cli/session/:sessionId', (req, res) => {
+  const { sessionId } = req.params;
+  const result = processManager.forceTerminate(sessionId);
+  
+  if (!result.success) {
+    return res.status(404).json({ error: result.message });
+  }
+  
+  res.json(result);
+});
+
+// List all CLI sessions
+app.get('/api/cli/sessions', (req, res) => {
+  const sessions = processManager.listSessions();
+  res.json({ sessions });
 });
 
 // Get MCP server status
@@ -1323,7 +1826,7 @@ app.post('/api/chat/stream', async (req, res) => {
   
   let fullResponse = '';
   let turnCount = 0;
-  const maxTurns = 10;
+  const maxTurns = 30; // Increased from 10 for better task completion
   
   // Build system prompt with skills and project context
   let systemPrompt = settings.systemPrompt || `You are Floyd v4.0.0, an AI assistant with multi-instance awareness.

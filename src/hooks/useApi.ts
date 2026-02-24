@@ -97,6 +97,81 @@ export function useApi() {
     }
   }, [fetchJson]);
 
+  // ============================================
+  // Floyd4 Chat - Full harness experience
+  // ============================================
+
+  // Get Floyd4 configuration
+  const getFloydConfig = useCallback(async () => {
+    const result = await fetchJson<{
+      available: boolean;
+      binaryPath: string;
+      models: Array<{ id: string; name: string; flag: string }>;
+      flags: Array<{ id: string; name: string; flag: string; description: string }>;
+      defaultModel: string;
+      defaultFlags: string[];
+      promptLoaded: boolean;
+      activeSession: { sessionId: string; pid: number; uptime: number } | null;
+    }>('/chat/floyd/config');
+    return result;
+  }, [fetchJson]);
+
+  // Start Floyd4 chat session
+  const startFloydChat = useCallback(async (options: { model?: string; flags?: string[]; cwd?: string } = {}) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchJson<{ success: boolean; sessionId: string; pid: number; command: string }>('/chat/floyd/start', {
+        method: 'POST',
+        body: JSON.stringify(options),
+      });
+      return result;
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchJson]);
+
+  // Send message to Floyd4
+  const sendFloydMessage = useCallback(async (message: string, options?: { model?: string; flags?: string[] }) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchJson<{
+        success: boolean;
+        output: string;
+        isRunning: boolean;
+        exitCode: number | null;
+        elapsed_ms: number;
+      }>('/chat/floyd/message', {
+        method: 'POST',
+        body: JSON.stringify({ message, ...options }),
+      });
+      return result;
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchJson]);
+
+  // Get Floyd4 output
+  const getFloydOutput = useCallback(async () => {
+    const result = await fetchJson<{ output: string; isRunning: boolean; exitCode: number | null }>('/chat/floyd/output');
+    return result;
+  }, [fetchJson]);
+
+  // Stop Floyd4 chat session
+  const stopFloydChat = useCallback(async () => {
+    const result = await fetchJson<{ success: boolean; message: string }>('/chat/floyd/session', {
+      method: 'DELETE',
+    });
+    return result;
+  }, [fetchJson]);
+
   // Chat (streaming with tool support)
   const sendMessageStream = useCallback(async (
     sessionId: string, 
@@ -193,5 +268,11 @@ export function useApi() {
     sendMessageStream,
     getTools,
     executeTool,
+    // Floyd4 methods
+    getFloydConfig,
+    startFloydChat,
+    sendFloydMessage,
+    getFloydOutput,
+    stopFloydChat,
   };
 }
