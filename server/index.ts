@@ -153,13 +153,13 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
   ],
 };
 
-// Default settings - use Floyd4 with GLM 5 as default
+// Default settings - use General API for pay-as-you-go billing
 let settings: Settings = {
   provider: 'anthropic-compatible',
   apiKey: process.env.GLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || '',
-  model: 'glm-4.7',
+  model: 'GLM-4-Plus',
   maxTokens: 16384,
-  baseURL: 'https://api.z.ai/api/anthropic',
+  baseURL: 'https://api.z.ai/api/paas/v4',
   temperature: 0.1,
   promptStyle: 'floyd',
 };
