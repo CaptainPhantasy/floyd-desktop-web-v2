@@ -64,7 +64,7 @@ export default function App() {
   }>>([]);
   const [emergencyMode, setEmergencyMode] = useState(false);
   const [thinkingContent, setThinkingContent] = useState('');
-  const [chatMode, setChatMode] = useState<'floyd4' | 'streaming'>('floyd4');
+  const [chatMode, setChatMode] = useState<'floyd4' | 'streaming'>('streaming');
   const [showModeAlert, setShowModeAlert] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);

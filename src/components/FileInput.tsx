@@ -23,6 +23,20 @@ const SUPPORTED_FILE_TYPES = {
   data: ['.json', '.csv', '.xml', '.yaml', '.yml'],
 };
 
+const MIME_TYPES = [
+  'image/*',
+  'video/*',
+  'application/pdf',
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  'text/*',
+  'application/json',
+  'application/xml',
+  'text/csv',
+  'text/yaml',
+  'text/x-yaml',
+].join(',');
+
 const ALL_SUPPORTED_TYPES = Object.values(SUPPORTED_FILE_TYPES).flat().join(',');
 
 const getFileType = (file: File): FileAttachment['type'] => {
@@ -80,7 +94,6 @@ export function FileInput({ attachments, onAttachmentsChange, disabled }: FileIn
         ref={fileInputRef}
         type="file"
         multiple
-        accept={ALL_SUPPORTED_TYPES}
         onChange={(e) => handleFileSelect(e.target.files)}
         className="hidden"
       />
