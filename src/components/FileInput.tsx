@@ -59,10 +59,9 @@ export function FileInput({ attachments, onAttachmentsChange, disabled }: FileIn
 
     const newAttachments: FileAttachment[] = [];
 
-    for (let i = 0; i < files.length; i++) {
-      const file = files[i];
+    // Process all files, waiting for image previews to generate
+    await Promise.all(Array.from(files).map(async (file, i) => {
       const type = getFileType(file);
-      
       const attachment: FileAttachment = {
         id: `${Date.now()}-${i}`,
         file,
@@ -70,18 +69,28 @@ export function FileInput({ attachments, onAttachmentsChange, disabled }: FileIn
       };
 
       if (type === 'image') {
-        const reader = new FileReader();
-        reader.onload = (e) => {
-          attachment.preview = e.target?.result as string;
-          onAttachmentsChange([...attachments, ...newAttachments.filter(a => a.id !== attachment.id), attachment]);
-        };
-        reader.readAsDataURL(file);
+        try {
+          const preview = await new Promise<string>((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = (e) => resolve(e.target?.result as string);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+          });
+          attachment.preview = preview;
+        } catch (err) {
+          console.error("Failed to generate preview for", file.name);
+        }
       }
 
       newAttachments.push(attachment);
-    }
+    }));
 
     onAttachmentsChange([...attachments, ...newAttachments]);
+    
+    // Reset file input so same file can be selected again
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
   };
 
   const handleRemove = (id: string) => {
@@ -94,12 +103,12 @@ export function FileInput({ attachments, onAttachmentsChange, disabled }: FileIn
         ref={fileInputRef}
         type="file"
         multiple
-        accept={MIME_TYPES}
         onChange={(e) => handleFileSelect(e.target.files)}
         className="hidden"
       />
       
       <button
+        type="button"
         onClick={() => fileInputRef.current?.click()}
         disabled={disabled}
         className={cn(
@@ -130,6 +139,7 @@ export function FileInput({ attachments, onAttachmentsChange, disabled }: FileIn
                 {attachment.file.name}
               </span>
               <button
+                type="button"
                 onClick={() => handleRemove(attachment.id)}
                 className="text-slate-400 hover:text-red-400 transition-colors"
               >
