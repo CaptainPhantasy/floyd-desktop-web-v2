@@ -15,68 +15,68 @@ interface SettingsModalProps {
 
 type Provider = 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
 
-const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
+const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string; hasVision?: boolean }>> = {
   anthropic: [
-    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet (Recommended)' },
-    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus (Most Capable)' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Fast)' },
+    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet (Recommended)', hasVision: true },
+    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus (Most Capable)', hasVision: true },
+    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet', hasVision: true },
+    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Fast)', hasVision: true },
   ],
   'anthropic-compatible': [
     // GLM-5 Series (Latest)
-    { id: 'glm-5', name: 'GLM-5 (Latest, Most Capable)' },
+    { id: 'glm-5', name: 'GLM-5 (Latest, Most Capable)', hasVision: false },
     // GLM-4.7 Series
-    { id: 'glm-4.7', name: 'GLM-4.7 (Complex Tasks)' },
-    { id: 'glm-4.7-flash', name: 'GLM-4.7-Flash (Fast)' },
-    { id: 'glm-4.7-flashx', name: 'GLM-4.7-FlashX (Fastest)' },
+    { id: 'glm-4.7', name: 'GLM-4.7 (Complex Tasks)', hasVision: false },
+    { id: 'glm-4.7-flash', name: 'GLM-4.7-Flash (Fast)', hasVision: false },
+    { id: 'glm-4.7-flashx', name: 'GLM-4.7-FlashX (Fastest)', hasVision: false },
     // GLM-4.6 Series
-    { id: 'glm-4.6', name: 'GLM-4.6' },
-    { id: 'glm-4.6v', name: 'GLM-4.6V (Vision)' },
-    { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash' },
-    { id: 'glm-4.6v-flashx', name: 'GLM-4.6V-FlashX' },
+    { id: 'glm-4.6', name: 'GLM-4.6', hasVision: false },
+    { id: 'glm-4.6v', name: 'GLM-4.6V (Vision)', hasVision: true },
+    { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash', hasVision: true },
+    { id: 'glm-4.6v-flashx', name: 'GLM-4.6V-FlashX', hasVision: true },
     // GLM-4.5 Series
-    { id: 'glm-4.5', name: 'GLM-4.5' },
-    { id: 'glm-4.5v', name: 'GLM-4.5V (Vision)' },
-    { id: 'glm-4.5-air', name: 'GLM-4.5-Air (Lightweight)' },
-    { id: 'glm-4.5-airx', name: 'GLM-4.5-AirX (Faster)' },
-    { id: 'glm-4.5-flash', name: 'GLM-4.5-Flash' },
+    { id: 'glm-4.5', name: 'GLM-4.5', hasVision: false },
+    { id: 'glm-4.5v', name: 'GLM-4.5V (Vision)', hasVision: true },
+    { id: 'glm-4.5-air', name: 'GLM-4.5-Air (Lightweight)', hasVision: false },
+    { id: 'glm-4.5-airx', name: 'GLM-4.5-AirX (Faster)', hasVision: false },
+    { id: 'glm-4.5-flash', name: 'GLM-4.5-Flash', hasVision: false },
     // GLM-4 Series
-    { id: 'glm-4-plus', name: 'GLM-4-Plus (High Concurrency)' },
-    { id: 'glm-4-32b-0414-128k', name: 'GLM-4-32B-128K (Long Context)' },
+    { id: 'glm-4-plus', name: 'GLM-4-Plus (High Concurrency)', hasVision: false },
+    { id: 'glm-4-32b-0414-128k', name: 'GLM-4-32B-128K (Long Context)', hasVision: false },
     // Special
-    { id: 'glm-ocr', name: 'GLM-OCR (Text Extraction)' },
+    { id: 'glm-ocr', name: 'GLM-OCR (Text Extraction)', hasVision: true },
     // Claude models via Z.ai
-    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet' },
-    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus' },
+    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet', hasVision: true },
+    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus', hasVision: true },
   ],
   openai: [
-    { id: 'gpt-4o', name: 'GPT-4o (Recommended)' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Cheap)' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-    { id: 'gpt-4', name: 'GPT-4' },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Cheapest)' },
+    { id: 'gpt-4o', name: 'GPT-4o (Recommended)', hasVision: true },
+    { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Cheap)', hasVision: true },
+    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo', hasVision: true },
+    { id: 'gpt-4', name: 'GPT-4', hasVision: true },
+    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Cheapest)', hasVision: false },
   ],
   glm: [
     // GLM-5 Series (Latest)
-    { id: 'glm-5', name: 'GLM-5 (Latest, Most Capable)' },
+    { id: 'glm-5', name: 'GLM-5 (Latest, Most Capable)', hasVision: false },
     // GLM-4.7 Series
-    { id: 'glm-4.7', name: 'GLM-4.7 (Complex Tasks)' },
-    { id: 'glm-4.7-flash', name: 'GLM-4.7-Flash (Fast)' },
-    { id: 'glm-4.7-flashx', name: 'GLM-4.7-FlashX (Fastest)' },
+    { id: 'glm-4.7', name: 'GLM-4.7 (Complex Tasks)', hasVision: false },
+    { id: 'glm-4.7-flash', name: 'GLM-4.7-Flash (Fast)', hasVision: false },
+    { id: 'glm-4.7-flashx', name: 'GLM-4.7-FlashX (Fastest)', hasVision: false },
     // GLM-4.6 Series
-    { id: 'glm-4.6', name: 'GLM-4.6' },
-    { id: 'glm-4.6v', name: 'GLM-4.6V (Vision)' },
-    { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash' },
-    { id: 'glm-4.6v-flashx', name: 'GLM-4.6V-FlashX' },
+    { id: 'glm-4.6', name: 'GLM-4.6', hasVision: false },
+    { id: 'glm-4.6v', name: 'GLM-4.6V (Vision)', hasVision: true },
+    { id: 'glm-4.6v-flash', name: 'GLM-4.6V-Flash', hasVision: true },
+    { id: 'glm-4.6v-flashx', name: 'GLM-4.6V-FlashX', hasVision: true },
     // GLM-4.5 Series
-    { id: 'glm-4.5', name: 'GLM-4.5' },
-    { id: 'glm-4.5v', name: 'GLM-4.5V (Vision)' },
-    { id: 'glm-4.5-air', name: 'GLM-4.5-Air (Lightweight)' },
-    { id: 'glm-4.5-airx', name: 'GLM-4.5-AirX (Faster)' },
-    { id: 'glm-4.5-flash', name: 'GLM-4.5-Flash' },
+    { id: 'glm-4.5', name: 'GLM-4.5', hasVision: false },
+    { id: 'glm-4.5v', name: 'GLM-4.5V (Vision)', hasVision: true },
+    { id: 'glm-4.5-air', name: 'GLM-4.5-Air (Lightweight)', hasVision: false },
+    { id: 'glm-4.5-airx', name: 'GLM-4.5-AirX (Faster)', hasVision: false },
+    { id: 'glm-4.5-flash', name: 'GLM-4.5-Flash', hasVision: false },
     // GLM-4 Series
-    { id: 'glm-4-plus', name: 'GLM-4-Plus (High Concurrency)' },
-    { id: 'glm-4-32b-0414-128k', name: 'GLM-4-32B-128K (Long Context)' },
+    { id: 'glm-4-plus', name: 'GLM-4-Plus (High Concurrency)', hasVision: false },
+    { id: 'glm-4-32b-0414-128k', name: 'GLM-4-32B-128K (Long Context)', hasVision: false },
   ],
 };
 
@@ -316,10 +316,13 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
             >
               {models.map((m) => (
                 <option key={m.id} value={m.id}>
-                  {m.name}
+                  {m.name} {m.hasVision ? '👁️' : ''}
                 </option>
               ))}
             </select>
+            <p className="text-xs text-slate-500 mt-1">
+              👁️ = Vision support (can analyze images)
+            </p>
           </div>
 
           {/* Temperature Slider */}

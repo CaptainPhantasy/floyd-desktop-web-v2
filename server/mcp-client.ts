@@ -660,6 +660,98 @@ export const BUILTIN_TOOLS = [
       },
     },
   },
+  {
+    name: 'browser_get_page_state',
+    description: 'Get comprehensive page state including DOM structure, cookies, localStorage, sessionStorage, scroll position, and form data. Useful for debugging and state capture.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        includeDOM: { type: 'boolean', description: 'Include DOM structure (default: true)' },
+        includeCookies: { type: 'boolean', description: 'Include cookies (default: true)' },
+        includeLocalStorage: { type: 'boolean', description: 'Include localStorage (default: true)' },
+        includeSessionStorage: { type: 'boolean', description: 'Include sessionStorage (default: true)' },
+        includeScrollPosition: { type: 'boolean', description: 'Include scroll position (default: true)' },
+        includeFormData: { type: 'boolean', description: 'Include form data (default: true)' },
+        selector: { type: 'string', description: 'CSS selector to limit DOM capture (optional)' },
+      },
+    },
+  },
+
+  // === VISION TOOLS (Tom the Peep - Floyd Vision Agent) ===
+  {
+    name: 'browser_analyze_page',
+    description: 'Full page audit: layout structure, accessibility violations, CSS layout systems, contrast issues, images, forms, interactive elements, and overall quality score (0-100). This is how non-vision LLMs "see" a web page.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        tabId: { type: 'number', description: 'Tab ID (optional, uses active tab)' },
+        includeCss: { type: 'boolean', description: 'Include CSS layout analysis (default true)' },
+        includeA11y: { type: 'boolean', description: 'Include accessibility audit (default true)' },
+      },
+    },
+  },
+  {
+    name: 'browser_analyze_element',
+    description: 'Deep inspection of a single element: all computed CSS styles, position, dimensions, accessibility attributes, children count, and every HTML attribute.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: 'CSS selector for the element' },
+        tabId: { type: 'number', description: 'Tab ID (optional)' },
+      },
+      required: ['selector'],
+    },
+  },
+  {
+    name: 'browser_find_elements',
+    description: 'Search for elements by visible text, aria-label, placeholder, alt text, or role. Use when you know what something says but not its CSS selector.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        query: { type: 'string', description: 'Text to search for (e.g. "Login", "Submit")' },
+        searchBy: { type: 'string', description: '"text", "aria", "placeholder", "alt", "role", or "any" (default "any")' },
+        limit: { type: 'number', description: 'Max results (default 10)' },
+        tabId: { type: 'number', description: 'Tab ID (optional)' },
+      },
+      required: ['query'],
+    },
+  },
+  {
+    name: 'browser_check_contrast',
+    description: 'Check color contrast ratios for WCAG AA compliance. Walks up DOM tree to find effective background. Returns failing elements with exact ratios and required minimums.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: 'CSS selector to check (default: all text elements)' },
+        tabId: { type: 'number', description: 'Tab ID (optional)' },
+      },
+    },
+  },
+  {
+    name: 'browser_extract_css',
+    description: 'Extract computed CSS properties for an element. Returns all visual styling: colors, fonts, spacing, layout, transforms, animations.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        selector: { type: 'string', description: 'CSS selector' },
+        properties: { type: 'string', description: 'Comma-separated CSS properties to extract (default: all relevant)' },
+        tabId: { type: 'number', description: 'Tab ID (optional)' },
+      },
+      required: ['selector'],
+    },
+  },
+  {
+    name: 'browser_scroll_to',
+    description: 'Scroll to an element or position. Supports CSS selectors or "top", "bottom", "up", "down".',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'CSS selector or "top"/"bottom"/"up"/"down"' },
+        tabId: { type: 'number', description: 'Tab ID (optional)' },
+      },
+      required: ['target'],
+    },
+  },
 ] as const;
 
 // ============================================================================
