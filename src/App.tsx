@@ -233,7 +233,7 @@ export default function App() {
           uploadedAttachments.length > 0 ? uploadedAttachments : undefined
         );
       } else {
-        const result = await api.sendFloydMessage(userMessage.content, messages, {
+        const result = await api.sendFloydMessage(currentSession.id, userMessage.content, messages, {
           attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined
         });
 

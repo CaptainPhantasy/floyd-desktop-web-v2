@@ -135,7 +135,7 @@ export function useApi() {
   }, [fetchJson]);
 
   // Send message to Floyd4
-  const sendFloydMessage = useCallback(async (message: string, history?: Message[], options?: { model?: string; flags?: string[]; attachments?: any[] }) => {
+  const sendFloydMessage = useCallback(async (sessionId: string, message: string, history?: Message[], options?: { model?: string; flags?: string[]; attachments?: any[] }) => {
     setLoading(true);
     setError(null);
     try {
@@ -147,7 +147,7 @@ export function useApi() {
         elapsed_ms: number;
       }>('/chat/floyd/message', {
         method: 'POST',
-        body: JSON.stringify({ message, history, attachments: options?.attachments, ...options }),
+        body: JSON.stringify({ sessionId, message, history, attachments: options?.attachments, ...options }),
       });
       return result;
     } catch (err: any) {

@@ -1483,6 +1483,30 @@ app.post('/api/chat/floyd/message', async (req, res) => {
     // Clean up trailing prompts
     output = output.replace(/floyd>\s*$/, '').trim();
     
+    // Save to active session if provided
+    if (sessionId) {
+      let session = sessions.get(sessionId);
+      if (session) {
+        // If message wasn't already added (we don't get 'history' here directly synced, so we append the new pair)
+        session.messages.push({
+          role: 'user',
+          content: finalMessage,
+          timestamp: startTime,
+        });
+        
+        if (output) {
+          session.messages.push({
+            role: 'assistant',
+            content: output,
+            timestamp: Date.now(),
+          });
+        }
+        
+        session.updated = Date.now();
+        await saveSession(session);
+      }
+    }
+    
     const elapsed = Date.now() - startTime;
     
     res.json({
