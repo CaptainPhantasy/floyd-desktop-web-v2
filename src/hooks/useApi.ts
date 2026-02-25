@@ -3,7 +3,7 @@
  */
 
 import { useState, useCallback } from 'react';
-import type { Session, Settings } from '@/types';
+import type { Session, Settings, Message } from '@/types';
 
 const API_BASE = '/api';
 
@@ -135,7 +135,7 @@ export function useApi() {
   }, [fetchJson]);
 
   // Send message to Floyd4
-  const sendFloydMessage = useCallback(async (message: string, options?: { model?: string; flags?: string[] }) => {
+  const sendFloydMessage = useCallback(async (message: string, history?: Message[], options?: { model?: string; flags?: string[]; attachments?: any[] }) => {
     setLoading(true);
     setError(null);
     try {
@@ -147,7 +147,7 @@ export function useApi() {
         elapsed_ms: number;
       }>('/chat/floyd/message', {
         method: 'POST',
-        body: JSON.stringify({ message, ...options }),
+        body: JSON.stringify({ message, history, attachments: options?.attachments, ...options }),
       });
       return result;
     } catch (err: any) {
@@ -282,7 +282,15 @@ export function useApi() {
     onDone: (usage: any, sessionId: string) => void,
     onError: (error: string) => void,
     onToolCall?: (tool: string, args: any, id: string) => void,
-    onToolResult?: (tool: string, id: string, result: any, success: boolean) => void
+    onToolResult?: (tool: string, id: string, result: any, success: boolean) => void,
+    attachments?: Array<{
+      id: string;
+      name: string;
+      size: number;
+      type: 'image' | 'video' | 'document' | 'code' | 'data';
+      mimeType: string;
+      data: string;
+    }>
   ) => {
     setLoading(true);
     setError(null);
@@ -291,7 +299,7 @@ export function useApi() {
       const response = await fetch(`${API_BASE}/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId, message, enableTools: true }),
+        body: JSON.stringify({ sessionId, message, enableTools: true, attachments: attachments || [] }),
       });
       
       if (!response.ok) {

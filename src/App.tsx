@@ -153,17 +153,14 @@ export default function App() {
 
   // Handle send message - using Floyd4 harness
   const handleSend = async () => {
-    if (!input.trim() || isStreaming || !currentSession) return;
+    if ((!input.trim() && attachments.length === 0) || isStreaming || !currentSession) return;
 
     // Check if attachments require streaming mode
-    if (attachments.length > 0 && chatMode === 'floyd4') {
-      setShowModeAlert(true);
-      return;
-    }
+    // (Removed restriction to allow attachments in floyd4 mode)
 
     const userMessage: Message = {
       role: 'user',
-      content: input.trim(),
+      content: input.trim() || '[Image Attached]',
       timestamp: Date.now(),
     };
 
@@ -232,10 +229,13 @@ export default function App() {
             setActiveToolCalls(prev => prev.map(tc =>
               tc.id === id ? { ...tc, result, success, isExecuting: false } : tc
             ));
-          }
+          },
+          uploadedAttachments.length > 0 ? uploadedAttachments : undefined
         );
       } else {
-        const result = await api.sendFloydMessage(userMessage.content);
+        const result = await api.sendFloydMessage(userMessage.content, messages, {
+          attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined
+        });
 
         if (result.output) {
           setMessages(prev => [...prev, {

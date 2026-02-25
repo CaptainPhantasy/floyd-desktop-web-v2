@@ -166,12 +166,12 @@ let settings: Settings = {
 
 // Floyd4 configuration
 const FLOYD4_BINARY = '/Users/douglastalley/.local/bin/floyd4';
-const FLOYD4_DEFAULT_MODEL = '5';  // GLM 5
+const FLOYD4_DEFAULT_MODEL = '46v';  // GLM 4.6 Vision
 const FLOYD4_DEFAULT_FLAGS = ['yolo'];
 
 // Load FLOYD.md as default system prompt
 let FLOYD_PROMPT = '';
-const FLOYD_MD_PATH = '/Volumes/Storage/floyd-sandbox/FloydDeployable/FLOYD.md';
+const FLOYD_MD_PATH = path.join(__dirname, 'prompts/floyd-vision-prompt.md');
 
 async function loadFloydPrompt() {
   try {
@@ -1371,90 +1371,124 @@ app.post('/api/chat/floyd/start', async (req, res) => {
 
 // Send a message to the active Floyd4 session
 app.post('/api/chat/floyd/message', async (req, res) => {
-  const { message, sessionId, model, flags, silent } = req.body;
+  const { message, sessionId, model, flags, silent, attachments } = req.body;
   
-  if (!message) {
-    return res.status(400).json({ error: 'Message is required' });
+  if (!message && (!attachments || attachments.length === 0)) {
+    return res.status(400).json({ error: 'Message or attachments are required' });
   }
-  
-  // Build the floyd4 run command
-  let command = FLOYD4_BINARY;
-  
-  // Add model flag
-  const modelId = model || FLOYD4_DEFAULT_MODEL;
-  const modelConfig = FLOYD_MODELS.find(m => m.id === modelId);
-  if (modelConfig) {
-    command += ` ${modelConfig.flag}`;
-  }
-  
-  // Add flags
-  const activeFlags = flags || FLOYD4_DEFAULT_FLAGS;
-  for (const flagId of activeFlags) {
-    const flagConfig = FLOYD_FLAGS.find(f => f.id === flagId);
-    if (flagConfig) {
-      command += ` ${flagConfig.flag}`;
-    }
-  }
-  
-  // Wrap message with completion instruction unless silent mode
-  let wrappedMessage = message;
-  if (!silent) {
-    wrappedMessage = `${message}\n\n[IMPORTANT: After completing, always end your response with a clear confirmation like "✅ Task completed" or "✅ Done" so the caller knows you finished.]`;
-  }
-  
-  // Add run command with the message
-  // Escape the message for shell
-  const escapedMessage = wrappedMessage.replace(/"/g, '\\"').replace(/\n/g, ' ');
-  command += ` run "${escapedMessage}"`;
-  
-  const runSessionId = `floyd_run_${Date.now()}`;
-  const startTime = Date.now();
   
   try {
-    // Execute floyd4 run - note: processManager generates its own sessionId
-    const result = await processManager.startProcess({
-      command,
-      cwd: process.cwd(),
-      timeout: 180000, // 3 minute timeout for responses
-    });
+    let actualSessionId: string;
+    let finalMessage = message || '';
+
+    // Handle attachments if any
+    if (attachments && attachments.length > 0) {
+      const tmpDir = path.join(process.cwd(), '.floyd-data', 'tmp', uuidv4());
+      await fs.mkdir(tmpDir, { recursive: true });
+      
+      let attachmentContext = '\n\n[Attached Files]:\n';
+      for (const att of attachments) {
+        // att.data is base64
+        const fileBuffer = Buffer.from(att.data, 'base64');
+        const filePath = path.join(tmpDir, att.name);
+        await fs.writeFile(filePath, fileBuffer);
+        attachmentContext += `- ${filePath}\n`;
+      }
+      finalMessage += attachmentContext;
+    }
     
-    // Use the actual session ID from processManager
-    const actualSessionId = result.sessionId;
+    // 1. Ensure we have an active interactive session
+    if (!activeFloyd4Session) {
+      let command = FLOYD4_BINARY;
+      const modelId = model || FLOYD4_DEFAULT_MODEL;
+      const modelConfig = FLOYD_MODELS.find(m => m.id === modelId);
+      if (modelConfig) command += ` ${modelConfig.flag}`;
+      
+      const activeFlags = flags || FLOYD4_DEFAULT_FLAGS;
+      for (const flagId of activeFlags) {
+        const flagConfig = FLOYD_FLAGS.find(f => f.id === flagId);
+        if (flagConfig) command += ` ${flagConfig.flag}`;
+      }
+      
+      const result = await processManager.startProcess({
+        command,
+        cwd: process.cwd(),
+        timeout: 0, // Persistent session
+      });
+      
+      actualSessionId = result.sessionId;
+      activeFloyd4Session = {
+        sessionId: actualSessionId,
+        pid: result.pid,
+        startedAt: Date.now(),
+      };
+      
+      // Wait for it to boot up and optionally inject the initial prompt
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      if (FLOYD_PROMPT) {
+        await processManager.interactWithProcess(actualSessionId, FLOYD_PROMPT);
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+    } else {
+      actualSessionId = activeFloyd4Session.sessionId;
+    }
     
-    // Wait for the process to complete (poll for output)
+    const startTime = Date.now();
+    
+    // Get current output length so we only return new output
+    const initialOutput = processManager.readProcessOutput(actualSessionId, 2000).output;
+    const initialLength = initialOutput.length;
+    
+    // Send input to the running interactive process
+    await processManager.interactWithProcess(actualSessionId, finalMessage);
+    
+    // Wait for the response to complete
     let output = '';
+    let lastOutput = '';
+    let unchangedCount = 0;
     let attempts = 0;
     const maxAttempts = 120; // 2 minutes max wait
     
     while (attempts < maxAttempts) {
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      await new Promise(resolve => setTimeout(resolve, 1000));
       const status = processManager.getSessionStatus(actualSessionId);
       
       if (!status || !status.isRunning) {
-        // Process completed, get final output
-        const finalOutput = processManager.readProcessOutput(actualSessionId, 2000);
-        output = finalOutput.output;
+        // Process died
         break;
       }
       
+      const currentFullOutput = processManager.readProcessOutput(actualSessionId, 2000).output;
+      output = currentFullOutput.substring(initialLength).trim();
+      
+      // Common interactive prompt markers
+      if (output.endsWith('> ') || output.endsWith('$ ') || output.includes('floyd>')) {
+        break;
+      }
+      
+      if (output === lastOutput && output.length > 0) {
+        unchangedCount++;
+        if (unchangedCount >= 3) {
+          // Output hasn't changed for 3 seconds, assume done
+          break;
+        }
+      } else {
+        unchangedCount = 0;
+      }
+      
+      lastOutput = output;
       attempts++;
     }
     
-    // If still running after timeout, get what we have
-    if (attempts >= maxAttempts) {
-      const partialOutput = processManager.readProcessOutput(actualSessionId, 2000);
-      output = partialOutput.output + '\n\n⏱️ Response timed out - partial output shown.';
-    }
-    
-    // Clean up the session
-    processManager.forceTerminate(actualSessionId);
+    // Clean up trailing prompts
+    output = output.replace(/floyd>\s*$/, '').trim();
     
     const elapsed = Date.now() - startTime;
     
     res.json({
       success: true,
       output,
-      isRunning: false,
+      isRunning: true,
       exitCode: null,
       elapsed_ms: elapsed,
       sessionId: actualSessionId,

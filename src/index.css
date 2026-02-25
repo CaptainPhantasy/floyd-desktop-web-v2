@@ -44,8 +44,6 @@ body {
   padding: 1rem;
   overflow-x: auto;
   max-width: 100%;
-  white-space: pre-wrap;
-  word-break: break-word;
 }
 
 .prose code {
