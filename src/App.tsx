@@ -158,13 +158,7 @@ export default function App() {
     // Check if attachments require streaming mode
     // (Removed restriction to allow attachments in floyd4 mode)
 
-    const userMessage: Message = {
-      role: 'user',
-      content: input.trim() || '[Image Attached]',
-      timestamp: Date.now(),
-    };
-
-    setMessages(prev => [...prev, userMessage]);
+    const inputText = input.trim();
     setInput('');
     setIsStreaming(true);
     setStreamingContent('');
@@ -188,6 +182,15 @@ export default function App() {
         }
         setAttachments([]);
       }
+
+      const userMessage: Message = {
+        role: 'user',
+        content: inputText || '[Image Attached]',
+        timestamp: Date.now(),
+        attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined,
+      };
+
+      setMessages(prev => [...prev, userMessage]);
 
       if (chatMode === 'streaming') {
         await api.sendMessageStream(

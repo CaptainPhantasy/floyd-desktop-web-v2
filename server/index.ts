@@ -1490,8 +1490,9 @@ app.post('/api/chat/floyd/message', async (req, res) => {
         // If message wasn't already added (we don't get 'history' here directly synced, so we append the new pair)
         session.messages.push({
           role: 'user',
-          content: finalMessage,
+          content: message || '[Image Attached]',
           timestamp: startTime,
+          attachments: attachments
         });
         
         if (output) {
@@ -1933,7 +1934,45 @@ app.post('/api/chat/stream', async (req, res) => {
   // Add existing session messages
   for (const m of session.messages) {
     if (m.role === 'user' || m.role === 'assistant') {
-      apiMessages.push({ role: m.role, content: m.content });
+      if (m.role === 'user' && m.attachments && m.attachments.length > 0) {
+        const contentBlocks: any[] = [];
+        for (const attachment of m.attachments) {
+          if (attachment.type === 'image') {
+            if (settings.provider === 'glm' || settings.provider === 'openai') {
+              contentBlocks.push({
+                type: 'image_url',
+                image_url: {
+                  url: `data:${attachment.mimeType || 'image/jpeg'};base64,${attachment.data}`
+                }
+              });
+            } else {
+              contentBlocks.push({
+                type: 'image',
+                source: {
+                  type: 'base64',
+                  media_type: attachment.mimeType || 'image/jpeg',
+                  data: attachment.data,
+                },
+              });
+            }
+          } else if (attachment.type === 'document' || attachment.type === 'code') {
+            if (settings.provider !== 'glm' && settings.provider !== 'openai') {
+              contentBlocks.push({
+                type: 'document',
+                source: {
+                  type: 'base64',
+                  media_type: attachment.mimeType || 'application/pdf',
+                  data: attachment.data,
+                },
+              });
+            }
+          }
+        }
+        contentBlocks.push({ type: 'text', text: m.content });
+        apiMessages.push({ role: m.role, content: contentBlocks });
+      } else {
+        apiMessages.push({ role: m.role, content: m.content });
+      }
     }
   }
 
@@ -1991,7 +2030,12 @@ app.post('/api/chat/stream', async (req, res) => {
 
   // Add new user message
   apiMessages.push({ role: 'user', content: userContent });
-  session.messages.push({ role: 'user', content: message, timestamp: Date.now() });
+  session.messages.push({ 
+    role: 'user', 
+    content: message, 
+    timestamp: Date.now(),
+    attachments: attachments 
+  });
   
   let fullResponse = '';
   let turnCount = 0;

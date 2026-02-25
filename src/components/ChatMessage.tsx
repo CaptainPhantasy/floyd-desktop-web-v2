@@ -29,11 +29,30 @@ export function ChatMessage({ message, isStreaming }: ChatMessageProps) {
       )}
       
       <div className={cn(
-        'max-w-[70%] rounded-lg px-4 py-3',
+        'max-w-[70%] rounded-lg px-4 py-3 flex flex-col gap-2',
         isUser 
           ? 'bg-sky-600 text-white' 
           : 'bg-slate-800 text-slate-100',
       )}>
+        {message.attachments && message.attachments.length > 0 && (
+          <div className="flex flex-wrap gap-2 mb-2">
+            {message.attachments.map((att, i) => (
+              att.type === 'image' ? (
+                <img 
+                  key={i} 
+                  src={`data:${att.mimeType || 'image/jpeg'};base64,${att.data}`} 
+                  alt={att.name}
+                  className="max-w-[200px] max-h-[200px] rounded-md border border-white/20"
+                />
+              ) : (
+                <div key={i} className="flex items-center gap-2 bg-black/20 px-3 py-2 rounded-md text-sm">
+                  <span className="font-mono truncate max-w-[150px]">{att.name}</span>
+                </div>
+              )
+            ))}
+          </div>
+        )}
+
         {isUser ? (
           <p className="whitespace-pre-wrap">{message.content}</p>
         ) : (
