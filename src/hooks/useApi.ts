@@ -283,6 +283,7 @@ export function useApi() {
     onError: (error: string) => void,
     onToolCall?: (tool: string, args: any, id: string) => void,
     onToolResult?: (tool: string, id: string, result: any, success: boolean) => void,
+    onThinking?: (content: string) => void,
     attachments?: Array<{
       id: string;
       name: string;
@@ -360,6 +361,11 @@ export function useApi() {
     return fetchJson<{ tools: any[] }>('/tools');
   }, [fetchJson]);
 
+  // GLM Vision diagnostic
+  const getGLMDiagnostic = useCallback(async () => {
+    return fetchJson<any>('/diagnostic/glm-vision');
+  }, [fetchJson]);
+
   // Execute tool directly
   const executeTool = useCallback(async (name: string, args: Record<string, unknown>) => {
     return fetchJson<{ success: boolean; result?: any; error?: string }>('/tools/execute', {
@@ -421,5 +427,6 @@ export function useApi() {
     sendFloydMessageStream,
     getFloydOutput,
     stopFloydChat,
+    getGLMDiagnostic,
   };
 }

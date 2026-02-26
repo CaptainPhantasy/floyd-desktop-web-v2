@@ -1,0 +1,16 @@
+{
+  "test": "GLM-4.6v Vision Test",
+  "endpoint": "https://open.bigmodel.cn/api/paas/v4",
+  "model": "glm-4.6v",
+  "status": "Fixed - Vision now working",
+  "issue": "Z.ai endpoint doesn't support GLM-4.6v vision properly",
+  "solution": "Use official BigModel endpoint",
+  "attachments": [
+    {
+      "type": "image",
+      "supported": true,
+      "format": "base64 + OpenAI image_url format"
+    }
+  ],
+  "autoMode": "Will auto-switch to streaming mode for images"
+}

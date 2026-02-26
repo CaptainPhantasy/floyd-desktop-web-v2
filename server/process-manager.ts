@@ -47,17 +47,19 @@ export class ProcessManager extends EventEmitter {
     cwd?: string;
     shell?: string;
     timeout?: number;
+    env?: NodeJS.ProcessEnv;
   }): Promise<{ sessionId: string; pid: number; initialOutput: string }> {
     const sessionId = `session_${++this.sessionCounter}`;
     const cwd = options.cwd || process.cwd();
     const shell = options.shell || this.defaultShell;
-    
+
     return new Promise((resolve, reject) => {
       try {
         const proc = spawn(shell, ['-c', options.command], {
           cwd,
           stdio: ['pipe', 'pipe', 'pipe'],
           detached: false,
+          env: options.env || process.env,
         });
 
         const session: ProcessSession = {

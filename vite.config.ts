@@ -20,9 +20,8 @@ export default defineConfig({
       '.ngrok-free.app',
       '.ngrok-free.dev',
     ],
-    hmr: {
-      clientPort: 443,
-    },
+    // clientPort removed - Vite auto-detects correct port
+    // For ngrok access, Vite handles WebSocket proxying automatically
     proxy: {
       '/api': {
         target: 'http://localhost:3001',

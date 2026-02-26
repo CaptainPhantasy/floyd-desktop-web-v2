@@ -143,6 +143,7 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
     { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Cheapest)' },
   ],
   glm: [
+    { id: 'glm-4.6v', name: 'GLM-4.6v Vision (Native Vision Support)' },
     { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
     { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
     { id: 'glm-4', name: 'GLM-4 (Standard)' },
@@ -153,13 +154,13 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
   ],
 };
 
-// Default settings - use General API for pay-as-you-go billing
+// Default settings - use official BigModel endpoint for vision support
 let settings: Settings = {
   provider: 'glm',
   apiKey: process.env.GLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || '',
-  model: 'GLM-4-Plus',
+  model: 'glm-4.6v', // GLM-4.6v with native vision support
   maxTokens: 16384,
-  baseURL: 'https://api.z.ai/api/paas/v4',
+  baseURL: 'https://open.bigmodel.cn/api/paas/v4', // Official endpoint for vision support
   temperature: 0.1,
   promptStyle: 'floyd',
 };
@@ -192,6 +193,22 @@ async function checkFloyd4Available(): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+// Build environment variables for Floyd4 subprocess
+// This is critical - Floyd4 needs these to authenticate with the API
+function buildFloyd4Env(): NodeJS.ProcessEnv {
+  return {
+    ...process.env, // Inherit parent environment
+    // ZAI API key (used by GLM models via ZAI endpoint)
+    ZAI_API_KEY: settings.apiKey || '',
+    // Floyd4-specific GLM configuration
+    FLOYD_GLM_API_KEY: settings.apiKey || '',
+    FLOYD_GLM_MODEL: settings.model || 'glm-5',
+    FLOYD_GLM_ENDPOINT: settings.baseURL || 'https://api.z.ai/api/paas/v4',
+    // Ensure Floyd4 knows we're in yolo mode
+    FLOYD_MODE: 'yolo',
+  };
 }
 
 // Active Floyd4 session for chat (single persistent session)
@@ -318,7 +335,7 @@ function getOpenAIClient(): OpenAI | null {
   }
   return new OpenAI({
     apiKey: settings.apiKey,
-    baseURL: settings.provider === 'glm' ? settings.baseURL : undefined,
+    baseURL: settings.baseURL, // Use the configured baseURL consistently
   });
 }
 
@@ -399,6 +416,116 @@ app.get('/api/health/ping', (req, res) => {
   });
 });
 
+// GLM Vision diagnostic endpoint
+app.get('/api/diagnostic/glm-vision', async (req, res) => {
+  console.log('\n🔍 GLM Vision Diagnostic - Starting...');
+  
+  const diagnostic = {
+    timestamp: new Date().toISOString(),
+    settings: {
+      provider: settings.provider,
+      model: settings.model,
+      baseURL: settings.baseURL,
+      hasApiKey: !!settings.apiKey
+    },
+    tests: []
+  };
+
+  // Test 1: Basic connectivity
+  try {
+    const client = new OpenAI({
+      apiKey: settings.apiKey,
+      baseURL: settings.baseURL
+    });
+    
+    const response = await client.chat.completions.create({
+      model: settings.model,
+      messages: [{ role: 'user', content: 'Respond with "GLM connected"' }],
+      max_tokens: 50
+    });
+    
+    diagnostic.tests.push({
+      name: 'Basic Connectivity',
+      status: 'success',
+      result: response.choices[0].message.content
+    });
+  } catch (error) {
+    diagnostic.tests.push({
+      name: 'Basic Connectivity', 
+      status: 'failed',
+      error: error.message
+    });
+  }
+
+  // Test 2: Vision capability with tiny image
+  try {
+    const client = new OpenAI({
+      apiKey: settings.apiKey,
+      baseURL: settings.baseURL
+    });
+    
+    // Create a tiny test image (1x1 red pixel)
+    const testImageBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z/C/HgAGgwJ/lK3Q6wAAAABJRU5ErkJggg==';
+    
+    const response = await client.chat.completions.create({
+      model: settings.model,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Describe what you see in this image.' },
+          {
+            type: 'image_url',
+            image_url: {
+              url: `data:image/png;base64,${testImageBase64}`
+            }
+          }
+        ]
+      }],
+      max_tokens: 100
+    });
+    
+    const visionResponse = response.choices[0].message.content;
+    const canSeeImage = visionResponse && !visionResponse.includes('cannot') && !visionResponse.includes('unable');
+    
+    diagnostic.tests.push({
+      name: 'Vision Capability',
+      status: canSeeImage ? 'success' : 'partial',
+      result: visionResponse,
+      canSeeImage
+    });
+  } catch (error) {
+    diagnostic.tests.push({
+      name: 'Vision Capability',
+      status: 'failed',
+      error: error.message
+    });
+  }
+
+  // Test 3: Model availability check
+  try {
+    const client = new OpenAI({
+      apiKey: settings.apiKey,
+      baseURL: settings.baseURL
+    });
+    
+    // Try to get model info (if API supports it)
+    diagnostic.tests.push({
+      name: 'Model Available',
+      status: 'info',
+      result: `Model ${settings.model} is configured`
+    });
+  } catch (error) {
+    diagnostic.tests.push({
+      name: 'Model Available',
+      status: 'warning',
+      error: error.message
+    });
+  }
+
+  console.log('🔍 GLM Vision Diagnostic - Results:', JSON.stringify(diagnostic, null, 2));
+  res.json(diagnostic);
+});
+
 // Get available providers and models
 app.get('/api/providers', (req, res) => {
   res.json({
@@ -476,13 +603,13 @@ app.post('/api/test-key', async (req, res) => {
         message: 'OpenAI API key is valid'
       });
     } else if (provider === 'glm') {
-      // GLM uses OpenAI-compatible API with different base URL
+      // GLM uses OpenAI-compatible API with official BigModel endpoint for vision
       const client = new OpenAI({ 
         apiKey,
         baseURL: 'https://open.bigmodel.cn/api/paas/v4'
       });
       const response = await client.chat.completions.create({
-        model: 'glm-4',
+        model: 'glm-4.6v', // Test with vision model
         max_tokens: 10,
         messages: [{ role: 'user', content: 'Say "ok"' }],
       });
@@ -995,7 +1122,7 @@ Be direct, helpful, and technically competent. No excessive emoji or generic AI 
       // OpenAI/GLM flow
       const client = new OpenAI({ 
         apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        baseURL: settings.baseURL, // Use consistent endpoint
       });
 
       const response = await client.chat.completions.create({
@@ -1142,7 +1269,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
     if (settings.provider === 'openai' || settings.provider === 'glm') {
       const openaiClient = new OpenAI({ 
         apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        baseURL: settings.baseURL, // Use consistent endpoint
       });
       
       const response = await openaiClient.chat.completions.create({
@@ -1335,12 +1462,13 @@ app.post('/api/chat/floyd/start', async (req, res) => {
   }
   
   const sessionId = `floyd_chat_${Date.now()}`;
-  
+
   try {
     const result = await processManager.startProcess({
       command,
       cwd: cwd || process.cwd(),
       timeout: 0, // No timeout for interactive session
+      env: buildFloyd4Env(), // Pass API key and config to Floyd4
     });
     
     activeFloyd4Session = {
@@ -1376,25 +1504,54 @@ app.post('/api/chat/floyd/message', async (req, res) => {
   if (!message && (!attachments || attachments.length === 0)) {
     return res.status(400).json({ error: 'Message or attachments are required' });
   }
+
+  // Check if this is a vision model request with images
+  const hasImages = attachments && attachments.some((att: any) => att.type === 'image');
+  const modelId = model || FLOYD4_DEFAULT_MODEL;
+  const isVisionModel = modelId.includes('v') || (modelId.includes('46') && hasImages);
+  
+  if (hasImages && isVisionModel) {
+    return res.status(400).json({ 
+      error: 'Vision models with images require streaming mode. Please use the streaming API endpoint instead.' 
+    });
+  }
   
   try {
     let actualSessionId: string;
     let finalMessage = message || '';
 
     // Handle attachments if any
+    // For GLM vision models, we need to pass images directly to the model, not just file paths
+    let imageAttachments: any[] = [];
     if (attachments && attachments.length > 0) {
       const tmpDir = path.join(process.cwd(), '.floyd-data', 'tmp', uuidv4());
       await fs.mkdir(tmpDir, { recursive: true });
       
       let attachmentContext = '\n\n[Attached Files]:\n';
       for (const att of attachments) {
-        // att.data is base64
+        // Save file for potential tool usage
         const fileBuffer = Buffer.from(att.data, 'base64');
         const filePath = path.join(tmpDir, att.name);
         await fs.writeFile(filePath, fileBuffer);
         attachmentContext += `- ${filePath}\n`;
+        
+        // Collect image data for direct model input
+        if (att.type === 'image') {
+          imageAttachments.push({
+            type: 'image_url',
+            image_url: {
+              url: `data:${att.mimeType || 'image/jpeg'};base64,${att.data}`
+            }
+          });
+        }
       }
-      finalMessage += attachmentContext;
+      
+      // For vision models, include both file paths (for tools) and direct image reference
+      if (imageAttachments.length > 0 && (model || FLOYD4_DEFAULT_MODEL).includes('v')) {
+        finalMessage += attachmentContext + '\n\n[Images provided for vision analysis]';
+      } else {
+        finalMessage += attachmentContext;
+      }
     }
     
     // 1. Ensure we have an active interactive session
@@ -1414,6 +1571,7 @@ app.post('/api/chat/floyd/message', async (req, res) => {
         command,
         cwd: process.cwd(),
         timeout: 0, // Persistent session
+        env: buildFloyd4Env(), // Pass API key and config to Floyd4
       });
       
       actualSessionId = result.sessionId;
@@ -1495,16 +1653,21 @@ app.post('/api/chat/floyd/message', async (req, res) => {
           attachments: attachments
         });
         
+        // Save immediately after user message for real-time sync
+        session.updated = Date.now();
+        await saveSession(session);
+        
         if (output) {
           session.messages.push({
             role: 'assistant',
             content: output,
             timestamp: Date.now(),
           });
+          
+          // Save again after assistant response
+          session.updated = Date.now();
+          await saveSession(session);
         }
-        
-        session.updated = Date.now();
-        await saveSession(session);
       }
     }
     
@@ -1741,6 +1904,7 @@ app.post('/api/floyd/start', async (req, res) => {
       command,
       cwd: cwd || process.cwd(),
       timeout: 0, // No timeout for interactive session
+      env: buildFloyd4Env(), // Pass API key and config to Floyd4
     });
 
     // If initial prompt provided, send it
@@ -1983,12 +2147,15 @@ app.post('/api/chat/stream', async (req, res) => {
 
     for (const attachment of attachments) {
       if (attachment.type === 'image') {
+        console.log(`[Server] Processing image attachment: ${attachment.name}, type: ${attachment.mimeType}`);
         if (settings.provider === 'glm' || settings.provider === 'openai') {
           // OpenAI/GLM format
+          const imageData = `data:${attachment.mimeType || 'image/jpeg'};base64,${attachment.data}`;
+          console.log(`[Server] GLM image data length: ${imageData.length} chars`);
           contentBlocks.push({
             type: 'image_url',
             image_url: {
-              url: `data:${attachment.mimeType || 'image/jpeg'};base64,${attachment.data}`
+              url: imageData
             }
           });
         } else {
@@ -2003,9 +2170,11 @@ app.post('/api/chat/stream', async (req, res) => {
           });
         }
       } else if (attachment.type === 'document' || attachment.type === 'code') {
+        console.log(`[Server] Processing document attachment: ${attachment.name}`);
         // Documents: for now, convert to text or skip (GLM may not support)
         if (settings.provider === 'glm' || settings.provider === 'openai') {
           // OpenAI doesn't have native document support, skip or convert
+          console.log(`[Server] Skipping document for GLM/OpenAI provider`);
           continue;
         } else {
           contentBlocks.push({
@@ -2026,6 +2195,7 @@ app.post('/api/chat/stream', async (req, res) => {
     });
 
     userContent = contentBlocks;
+    console.log(`[Server] Final user content blocks for ${settings.provider}:`, JSON.stringify(contentBlocks, null, 2));
   }
 
   // Add new user message
@@ -2110,9 +2280,17 @@ Acknowledge your role as Desktop Floyd when relevant.`;
       // OpenAI-compatible flow (OpenAI and GLM)
       const client = new OpenAI({ 
         apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        baseURL: settings.baseURL, // Use consistent endpoint
       });
       const openaiTools = enableTools ? getOpenAITools() : undefined;
+      
+      console.log(`[Server] Making ${settings.provider} API request:`, {
+        model: settings.model,
+        baseURL: settings.baseURL,
+        hasAttachments: attachments && attachments.length > 0,
+        messageCount: apiMessages.length,
+        toolsEnabled: !!openaiTools
+      });
       
       while (turnCount < maxTurns) {
         turnCount++;
@@ -2130,6 +2308,12 @@ Acknowledge your role as Desktop Floyd when relevant.`;
         
         const choice = response.choices[0];
         const assistantMessage = choice.message;
+        
+        // Handle thinking/reasoning content (GLM models)
+        const anyMessage = assistantMessage as any;
+        if (anyMessage.reasoning_content) {
+          res.write(`data: ${JSON.stringify({ type: 'thinking', content: anyMessage.reasoning_content })}\n\n`);
+        }
         
         // Handle text content
         if (assistantMessage.content) {

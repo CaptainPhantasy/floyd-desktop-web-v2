@@ -123,12 +123,17 @@ export default function App() {
   }, []);
 
   // Auto-refresh: Poll for new messages from mobile/other clients
-  // NOTE: Only update if server has MORE messages than local (another client added)
+  // Enhanced to handle real-time updates better
   useEffect(() => {
     if (status !== 'ready') return;
 
     const interval = setInterval(async () => {
-      if (!currentSession || isStreaming) return;
+      if (!currentSession) return;
+
+      // Skip if we're actively streaming to avoid conflicts
+      if (isStreaming) {
+        return;
+      }
 
       try {
         const updatedSession = await api.getSession(currentSession.id);
@@ -136,7 +141,20 @@ export default function App() {
         // Only update if server has MORE messages (from another client)
         // Never overwrite local messages with fewer server messages
         if (updatedSession.messages.length > messages.length) {
+          console.log(`[App] Auto-refresh: Found ${updatedSession.messages.length - messages.length} new messages`);
           setMessages(updatedSession.messages);
+        }
+        // Also check if the last message content differs (Floyd4 may update the same message)
+        else if (updatedSession.messages.length === messages.length && updatedSession.messages.length > 0) {
+          const localLast = messages[messages.length - 1];
+          const serverLast = updatedSession.messages[updatedSession.messages.length - 1];
+          
+          if (localLast && serverLast && 
+              localLast.role === 'assistant' && serverLast.role === 'assistant' &&
+              localLast.content !== serverLast.content) {
+            console.log('[App] Auto-refresh: Last assistant message updated');
+            setMessages(updatedSession.messages);
+          }
         }
 
         const updatedSessions = await api.getSessions();
@@ -146,7 +164,7 @@ export default function App() {
       } catch (err) {
         console.error('Auto-refresh failed:', err);
       }
-    }, 3000);
+    }, 500); // Reduced to 500ms for more responsive real-time updates
 
     return () => clearInterval(interval);
   }, [status, currentSession, isStreaming, messages.length, sessions.length, api]);
@@ -155,8 +173,21 @@ export default function App() {
   const handleSend = async () => {
     if ((!input.trim() && attachments.length === 0) || isStreaming || !currentSession) return;
 
-    // Check if attachments require streaming mode
-    // (Removed restriction to allow attachments in floyd4 mode)
+    // Check if attachments require streaming mode (for vision support)
+    const hasImages = attachments.some(att => att.type === 'image');
+    const hasVisionAttachments = attachments.some(att => 
+      att.type === 'image' || att.type === 'document' || att.type === 'code'
+    );
+
+    // Auto-switch to streaming mode for vision models
+    if (hasVisionAttachments && chatMode !== 'streaming') {
+      setChatMode('streaming');
+      setStatusMessage('🔄 Auto-switched to Streaming Mode - GLM-4.6v Vision Active');
+      // Show a brief notification
+      setTimeout(() => {
+        setStatusMessage('✅ Ready - GLM-4.6v can now see attached images');
+      }, 2000);
+    }
 
     const inputText = input.trim();
     setInput('');
@@ -192,7 +223,8 @@ export default function App() {
 
       setMessages(prev => [...prev, userMessage]);
 
-      if (chatMode === 'streaming') {
+      // Always use streaming mode when attachments are present for proper vision support
+      if (chatMode === 'streaming' || hasVisionAttachments) {
         await api.sendMessageStream(
           currentSession.id,
           userMessage.content,
@@ -236,6 +268,7 @@ export default function App() {
           uploadedAttachments.length > 0 ? uploadedAttachments : undefined
         );
       } else {
+        // Floyd4 mode - only for text-only messages
         const result = await api.sendFloydMessage(currentSession.id, userMessage.content, messages, {
           attachments: uploadedAttachments.length > 0 ? uploadedAttachments : undefined
         });
@@ -402,6 +435,28 @@ export default function App() {
               messages={messages} 
               sessionTitle={currentSession?.title}
             />
+            
+            {/* Debug GLM Vision Button - Only show in development */}
+            {process.env.NODE_ENV === 'development' && (
+              <button
+                onClick={async () => {
+                  setStatusMessage('🔍 Running GLM Vision diagnostic...');
+                  try {
+                    const diagnostic = await api.getGLMDiagnostic();
+                    console.log('GLM Diagnostic Result:', diagnostic);
+                    const successCount = diagnostic.tests.filter(t => t.status === 'success').length;
+                    setStatusMessage(`🔍 Diagnostic complete: ${successCount}/${diagnostic.tests.length} tests passed`);
+                  } catch (error) {
+                    console.error('Diagnostic failed:', error);
+                    setStatusMessage('🔍 Diagnostic failed - check console');
+                  }
+                }}
+                className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+                title="Debug GLM Vision"
+              >
+                <Wrench className="w-5 h-5" />
+              </button>
+            )}
             
             <button
               onClick={() => setShowBrowork(true)}
@@ -732,7 +787,7 @@ export default function App() {
       {chatMode === 'streaming' && (
         <div className="fixed bottom-20 right-6 bg-sky-600/90 backdrop-blur-sm text-white px-3 py-1.5 rounded-full text-xs font-medium shadow-lg flex items-center gap-2">
           <CheckCircle2 className="w-3 h-3" />
-          Streaming Mode (Vision Enabled)
+          Streaming Mode (GLM-4.6v Vision Active)
           <button
             onClick={() => {
               setChatMode('floyd4');
