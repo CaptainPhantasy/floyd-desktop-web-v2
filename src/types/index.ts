@@ -12,6 +12,12 @@ export interface Message {
   content: string;
   timestamp?: number;
   attachments?: Attachment[];
+  media?: {
+    type: 'image' | 'audio' | 'video';
+    data: string; // base64
+    mimeType: string;
+    metadata?: any;
+  };
 }
 
 export interface Session {

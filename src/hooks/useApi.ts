@@ -517,6 +517,193 @@ export function useApi() {
     }>('/generate/stats');
   }, [fetchJson]);
 
+  // ============================================
+  // Phase 5 Task 9: SSE Streaming for Media Generation
+  // ============================================
+
+  /**
+   * Stream media generation progress via SSE
+   * Returns media data when complete
+   */
+  const generateMediaStream = useCallback((
+    message: string,
+    callbacks: {
+      onIntent?: (intent: string, confidence: number) => void;
+      onProgress?: (stage: string, progress: number, message?: string) => void;
+      onMedia?: (media: { type: 'image' | 'audio' | 'video'; data: string; mimeType: string; metadata?: any }) => void;
+      onTaskCreated?: (taskId: string, pollUrl: string) => void;
+      onClarification?: (message: string) => void;
+      onError?: (error: string) => void;
+      onDone?: () => void;
+    }
+  ) => {
+    const controller = new AbortController();
+    
+    const startStream = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/chat/generate/stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ message }),
+          signal: controller.signal,
+        });
+        
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          callbacks.onError?.(data.error || `HTTP ${response.status}`);
+          return;
+        }
+        
+        const reader = response.body?.getReader();
+        if (!reader) {
+          callbacks.onError?.('No response body');
+          return;
+        }
+        
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          buffer += decoder.decode(value, { stream: true });
+          
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                switch (data.type) {
+                  case 'intent':
+                    callbacks.onIntent?.(data.intent, data.confidence);
+                    break;
+                  case 'progress':
+                    callbacks.onProgress?.(data.stage, data.progress, data.message);
+                    break;
+                  case 'complete':
+                    if (data.media) {
+                      callbacks.onMedia?.(data.media);
+                    }
+                    callbacks.onDone?.();
+                    break;
+                  case 'task-created':
+                    callbacks.onTaskCreated?.(data.taskId, `/api/generate/stream/${data.taskId}`);
+                    break;
+                  case 'polling':
+                    // Video generation - client should poll
+                    callbacks.onProgress?.('processing', 30, data.message);
+                    break;
+                  case 'clarification':
+                    callbacks.onClarification?.(data.message);
+                    callbacks.onDone?.();
+                    break;
+                  case 'error':
+                    callbacks.onError?.(data.error);
+                    callbacks.onDone?.();
+                    break;
+                }
+              } catch {
+                // Ignore parse errors
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          callbacks.onError?.(err.message);
+        }
+      }
+    };
+    
+    startStream();
+    
+    // Return abort function
+    return () => controller.abort();
+  }, []);
+
+  /**
+   * Poll task progress via SSE
+   * Returns task result when complete
+   */
+  const pollTaskProgress = useCallback((
+    taskId: string,
+    callbacks: {
+      onProgress?: (status: string, progress: number) => void;
+      onComplete?: (result: any) => void;
+      onError?: (error: string) => void;
+    }
+  ) => {
+    const controller = new AbortController();
+    
+    const startPoll = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/generate/stream/${taskId}`, {
+          signal: controller.signal,
+        });
+        
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          callbacks.onError?.(data.error || `HTTP ${response.status}`);
+          return;
+        }
+        
+        const reader = response.body?.getReader();
+        if (!reader) {
+          callbacks.onError?.('No response body');
+          return;
+        }
+        
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          
+          buffer += decoder.decode(value, { stream: true });
+          
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+          
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(line.slice(6));
+                
+                switch (data.type) {
+                  case 'init':
+                  case 'progress':
+                    callbacks.onProgress?.(data.status, data.progress || 0);
+                    break;
+                  case 'complete':
+                    callbacks.onComplete?.(data.result);
+                    break;
+                  case 'error':
+                    callbacks.onError?.(data.error);
+                    break;
+                }
+              } catch {
+                // Ignore parse errors
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          callbacks.onError?.(err.message);
+        }
+      }
+    };
+    
+    startPoll();
+    
+    return () => controller.abort();
+  }, []);
+
   return {
     loading,
     error,
@@ -549,5 +736,8 @@ export function useApi() {
     generateVideo,
     getVideoStatus,
     getGenerationStats,
+    // Phase 5 Task 9: SSE streaming methods
+    generateMediaStream,
+    pollTaskProgress,
   };
 }

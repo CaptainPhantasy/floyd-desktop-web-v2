@@ -24,6 +24,7 @@ import { WebSocketMCPServer } from './ws-mcp-server.js';
 import { ProcessManager } from './process-manager.js';
 import { multimediaAPI } from './src/multimedia-api.js';
 import { taskQueue } from './src/task-queue.js';
+import { parseIntent } from './src/intent-parser.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -52,7 +53,8 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Increase JSON body limit to 50MB to support large base64-encoded images
+app.use(express.json({ limit: '50mb' }));
 
 // Configure multer for file uploads
 const upload = multer({
@@ -935,6 +937,372 @@ app.get('/api/generate/status/:taskId', async (req, res) => {
 // ============================================
 app.get('/api/generate/stats', (req, res) => {
   res.json(taskQueue.getStats());
+});
+
+// ============================================
+// Phase 5 Task 9: SSE Progress Events Endpoint
+// Streams real-time progress for media generation tasks
+// ============================================
+app.get('/api/generate/stream/:taskId', async (req, res) => {
+  const { taskId } = req.params;
+  
+  // Verify task exists
+  const task = taskQueue.getTask(taskId);
+  if (!task) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+  
+  // Set up SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Disable nginx buffering
+  
+  // Send initial state
+  res.write(`data: ${JSON.stringify({
+    type: 'init',
+    taskId: task.id,
+    taskType: task.type,
+    status: task.status,
+    progress: task.progress || 0,
+    timestamp: Date.now(),
+  })}\n\n`);
+  
+  // Polling interval for task updates
+  const pollInterval = setInterval(async () => {
+    const currentTask = taskQueue.getTask(taskId);
+    
+    if (!currentTask) {
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        error: 'Task disappeared',
+        timestamp: Date.now(),
+      })}\n\n`);
+      clearInterval(pollInterval);
+      res.end();
+      return;
+    }
+    
+    // For video tasks with external ID, poll the external API
+    if (currentTask.status === 'processing' && currentTask.metadata?.externalTaskId) {
+      multimediaAPI.configure({
+        zaiApiKey: settings.zaiApiKey || process.env.GLM_API_KEY,
+      });
+      
+      try {
+        const result = await multimediaAPI.getVideoResult(currentTask.metadata.externalTaskId);
+        
+        if (result.success && result.data) {
+          // Video is ready
+          taskQueue.setResult(taskId, {
+            data: result.data,
+            metadata: result.metadata,
+          });
+        } else if (result.progress !== undefined) {
+          // Update progress if available
+          taskQueue.updateStatus(taskId, 'processing', result.progress);
+        }
+      } catch (error: any) {
+        console.error('[SSE Poll] Error:', error.message);
+      }
+    }
+    
+    const updatedTask = taskQueue.getTask(taskId)!;
+    
+    // Send progress event
+    res.write(`data: ${JSON.stringify({
+      type: 'progress',
+      taskId: updatedTask.id,
+      status: updatedTask.status,
+      progress: updatedTask.progress || 0,
+      timestamp: Date.now(),
+    })}\n\n`);
+    
+    // Check if task is complete
+    if (updatedTask.status === 'completed') {
+      res.write(`data: ${JSON.stringify({
+        type: 'complete',
+        taskId: updatedTask.id,
+        result: updatedTask.result,
+        timestamp: Date.now(),
+      })}\n\n`);
+      clearInterval(pollInterval);
+      res.end();
+    } else if (updatedTask.status === 'failed') {
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        taskId: updatedTask.id,
+        error: updatedTask.error,
+        timestamp: Date.now(),
+      })}\n\n`);
+      clearInterval(pollInterval);
+      res.end();
+    }
+  }, 1000); // Poll every second
+  
+  // Handle client disconnect
+  req.on('close', () => {
+    clearInterval(pollInterval);
+  });
+});
+
+// ============================================
+// SSE for Chat-to-Generation with streaming
+// Returns progress events and final media result
+// ============================================
+app.post('/api/chat/generate/stream', async (req, res) => {
+  const { message } = req.body;
+  
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ 
+      error: 'Message is required',
+      code: 'MISSING_MESSAGE'
+    });
+  }
+  
+  // Set up SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  
+  // Parse intent from the message
+  const parsed = parseIntent(message);
+  
+  // Send intent parsed event
+  res.write(`data: ${JSON.stringify({
+    type: 'intent',
+    intent: parsed.intent,
+    confidence: parsed.confidence,
+    timestamp: Date.now(),
+  })}\n\n`);
+  
+  // If unknown intent, return clarifying question
+  if (parsed.intent === 'unknown') {
+    res.write(`data: ${JSON.stringify({
+      type: 'clarification',
+      message: parsed.clarifyingQuestion,
+      timestamp: Date.now(),
+    })}\n\n`);
+    res.end();
+    return;
+  }
+  
+  // Configure multimedia API
+  multimediaAPI.configure({
+    openaiApiKey: settings.openaiApiKey || process.env.OPENAI_API_KEY,
+    elevenLabsApiKey: settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY,
+    zaiApiKey: settings.zaiApiKey || process.env.GLM_API_KEY,
+  });
+  
+  try {
+    // Send progress: starting
+    res.write(`data: ${JSON.stringify({
+      type: 'progress',
+      stage: 'starting',
+      message: 'Connecting to generation API...',
+      progress: 10,
+      timestamp: Date.now(),
+    })}\n\n`);
+    
+    if (parsed.intent === 'generate-image') {
+      const prompt = parsed.parameters.prompt;
+      if (!prompt) {
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          error: 'Could not extract prompt from message',
+          timestamp: Date.now(),
+        })}\n\n`);
+        res.end();
+        return;
+      }
+      
+      // Send progress: generating
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        stage: 'generating',
+        message: 'Generating image...',
+        progress: 30,
+        timestamp: Date.now(),
+      })}\n\n`);
+      
+      const result = await multimediaAPI.generateImage(prompt);
+      
+      if (!result.success) {
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          error: result.error || 'Image generation failed',
+          timestamp: Date.now(),
+        })}\n\n`);
+        res.end();
+        return;
+      }
+      
+      // Send progress: processing
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        stage: 'processing',
+        message: 'Processing generated image...',
+        progress: 80,
+        timestamp: Date.now(),
+      })}\n\n`);
+      
+      // Send complete event with media data
+      res.write(`data: ${JSON.stringify({
+        type: 'complete',
+        media: {
+          type: 'image',
+          data: result.data,
+          mimeType: `image/${result.metadata?.format || 'png'}`,
+          metadata: {
+            prompt,
+            width: result.metadata?.width,
+            height: result.metadata?.height,
+          },
+        },
+        timestamp: Date.now(),
+      })}\n\n`);
+      res.end();
+      
+    } else if (parsed.intent === 'generate-audio') {
+      const text = parsed.parameters.text;
+      const voiceId = parsed.parameters.voiceId || 'default';
+      
+      if (!text) {
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          error: 'Could not extract text from message',
+          timestamp: Date.now(),
+        })}\n\n`);
+        res.end();
+        return;
+      }
+      
+      // Send progress: generating
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        stage: 'generating',
+        message: 'Synthesizing speech...',
+        progress: 30,
+        timestamp: Date.now(),
+      })}\n\n`);
+      
+      const result = await multimediaAPI.generateAudio(text, voiceId);
+      
+      if (!result.success) {
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          error: result.error || 'Audio generation failed',
+          timestamp: Date.now(),
+        })}\n\n`);
+        res.end();
+        return;
+      }
+      
+      // Send complete event with media data
+      res.write(`data: ${JSON.stringify({
+        type: 'complete',
+        media: {
+          type: 'audio',
+          data: result.data,
+          mimeType: result.metadata?.mimeType || 'audio/mpeg',
+          metadata: {
+            text,
+            duration: result.metadata?.duration,
+          },
+        },
+        timestamp: Date.now(),
+      })}\n\n`);
+      res.end();
+      
+    } else if (parsed.intent === 'generate-video') {
+      const prompt = parsed.parameters.prompt;
+      
+      if (!prompt) {
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          error: 'Could not extract prompt from message',
+          timestamp: Date.now(),
+        })}\n\n`);
+        res.end();
+        return;
+      }
+      
+      // Create task in queue
+      const task = taskQueue.createTask({
+        type: 'video-generation',
+        metadata: { prompt },
+      });
+      
+      // Send task created event
+      res.write(`data: ${JSON.stringify({
+        type: 'task-created',
+        taskId: task.id,
+        message: 'Video generation started...',
+        progress: 10,
+        timestamp: Date.now(),
+      })}\n\n`);
+      
+      // Start video generation
+      taskQueue.updateStatus(task.id, 'processing', 20);
+      
+      const result = await multimediaAPI.generateVideo(prompt);
+      
+      if (!result.success) {
+        taskQueue.setError(task.id, result.error || 'Video generation failed');
+        res.write(`data: ${JSON.stringify({
+          type: 'error',
+          error: result.error || 'Video generation failed',
+          taskId: task.id,
+          timestamp: Date.now(),
+        })}\n\n`);
+        res.end();
+        return;
+      }
+      
+      // Store external task ID for polling
+      taskQueue.updateMetadata(task.id, { externalTaskId: result.taskId });
+      
+      // Send progress event with task ID for SSE polling
+      res.write(`data: ${JSON.stringify({
+        type: 'progress',
+        stage: 'processing',
+        taskId: task.id,
+        externalTaskId: result.taskId,
+        message: 'Video is being generated. This may take a few minutes...',
+        progress: 30,
+        timestamp: Date.now(),
+        pollUrl: `/api/generate/stream/${task.id}`,
+      })}\n\n`);
+      
+      // For video, we don't keep the connection open indefinitely
+      // Client should poll the SSE endpoint
+      res.write(`data: ${JSON.stringify({
+        type: 'polling',
+        taskId: task.id,
+        message: 'Use the pollUrl to receive progress updates',
+        timestamp: Date.now(),
+      })}\n\n`);
+      res.end();
+      
+    } else {
+      res.write(`data: ${JSON.stringify({
+        type: 'error',
+        error: `Unknown intent: ${parsed.intent}`,
+        timestamp: Date.now(),
+      })}\n\n`);
+      res.end();
+    }
+    
+  } catch (error: any) {
+    console.error('[SSE Generate] Error:', error.message);
+    res.write(`data: ${JSON.stringify({
+      type: 'error',
+      error: error.message || 'Generation failed',
+      timestamp: Date.now(),
+    })}\n\n`);
+    res.end();
+  }
 });
 
 // Get available providers and models
@@ -2196,6 +2564,163 @@ app.delete('/api/chat/floyd/session', (req, res) => {
   activeFloyd4Session = null;
   
   res.json(result);
+});
+
+// ============================================
+// Phase 5: Chat-to-Generation Router
+// Parses natural language and routes to multimedia generation
+// ============================================
+app.post('/api/chat/generate', async (req, res) => {
+  const { message } = req.body;
+  
+  if (!message || typeof message !== 'string') {
+    return res.status(400).json({ 
+      error: 'Message is required',
+      code: 'MISSING_MESSAGE'
+    });
+  }
+  
+  // Parse intent from the message
+  const parsed = parseIntent(message);
+  
+  // If unknown intent, return clarifying question
+  if (parsed.intent === 'unknown') {
+    return res.json({
+      type: 'clarification',
+      intent: 'unknown',
+      confidence: parsed.confidence,
+      message: parsed.clarifyingQuestion,
+    });
+  }
+  
+  // Configure multimedia API with current settings
+  multimediaAPI.configure({
+    openaiApiKey: settings.openaiApiKey || process.env.OPENAI_API_KEY,
+    elevenLabsApiKey: settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY,
+    zaiApiKey: settings.zaiApiKey || process.env.GLM_API_KEY,
+  });
+  
+  try {
+    let result: any;
+    let responseType: string;
+    
+    switch (parsed.intent) {
+      case 'generate-image': {
+        const prompt = parsed.parameters.prompt;
+        if (!prompt) {
+          return res.status(400).json({
+            error: 'Could not extract prompt from message',
+            hint: 'Try "generate an image of [description]"',
+            code: 'MISSING_PROMPT'
+          });
+        }
+        
+        result = await multimediaAPI.generateImage(prompt);
+        responseType = 'image';
+        
+        if (!result.success) {
+          return res.status(500).json({
+            error: result.error || 'Image generation failed',
+            intent: parsed.intent,
+            code: 'GENERATION_FAILED'
+          });
+        }
+        
+        return res.json({
+          type: responseType,
+          intent: parsed.intent,
+          confidence: parsed.confidence,
+          data: result.data,
+          metadata: result.metadata,
+          prompt,
+        });
+      }
+      
+      case 'generate-audio': {
+        const text = parsed.parameters.text;
+        const voiceId = parsed.parameters.voiceId || 'default';
+        
+        if (!text) {
+          return res.status(400).json({
+            error: 'Could not extract text from message',
+            hint: 'Try "say [text to speak]"',
+            code: 'MISSING_TEXT'
+          });
+        }
+        
+        result = await multimediaAPI.generateAudio(text, voiceId);
+        responseType = 'audio';
+        
+        if (!result.success) {
+          return res.status(500).json({
+            error: result.error || 'Audio generation failed',
+            intent: parsed.intent,
+            code: 'GENERATION_FAILED'
+          });
+        }
+        
+        return res.json({
+          type: responseType,
+          intent: parsed.intent,
+          confidence: parsed.confidence,
+          data: result.data,
+          metadata: result.metadata,
+          text,
+          voiceId,
+        });
+      }
+      
+      case 'generate-video': {
+        const prompt = parsed.parameters.prompt;
+        
+        if (!prompt) {
+          return res.status(400).json({
+            error: 'Could not extract prompt from message',
+            hint: 'Try "create a video of [description]"',
+            code: 'MISSING_PROMPT'
+          });
+        }
+        
+        result = await multimediaAPI.generateVideo(prompt, {
+          duration: parsed.parameters.duration,
+        });
+        responseType = 'video';
+        
+        if (!result.success) {
+          return res.status(500).json({
+            error: result.error || 'Video generation failed',
+            intent: parsed.intent,
+            code: 'GENERATION_FAILED'
+          });
+        }
+        
+        // Video is async, return task info for polling
+        return res.json({
+          type: responseType,
+          intent: parsed.intent,
+          confidence: parsed.confidence,
+          taskId: result.taskId,
+          status: 'processing',
+          prompt,
+          message: 'Video generation started. Poll /api/generate/status/:taskId for progress.',
+        });
+      }
+      
+      default:
+        return res.status(500).json({
+          error: 'Unhandled intent type',
+          intent: parsed.intent,
+          code: 'UNHANDLED_INTENT'
+        });
+    }
+  } catch (error: any) {
+    console.error('[Chat Generate] Error:', error.message);
+    res.status(500).json({
+      error: error.message || 'Generation failed',
+      intent: parsed.intent,
+      code: 'INTERNAL_ERROR'
+    });
+  }
 });
 
 // Send message (non-streaming)
