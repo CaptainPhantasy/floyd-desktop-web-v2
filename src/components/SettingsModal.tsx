@@ -101,7 +101,7 @@ export function SettingsModal({ isOpen, onClose, onSave }: SettingsModalProps) {
   useEffect(() => {
     if (isOpen) {
       api.getSettings().then((settings) => {
-        setProvider(settings.provider || 'anthropic');
+        setProvider((settings.provider || 'anthropic') as Provider);
         setModel(settings.model);
         setHasExistingKey(settings.hasApiKey);
         setKeyPreview(settings.apiKeyPreview);

@@ -22,6 +22,8 @@ import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
 import { WebSocketMCPServer } from './ws-mcp-server.js';
 import { ProcessManager } from './process-manager.js';
+import { multimediaAPI } from './src/multimedia-api.js';
+import { taskQueue } from './src/task-queue.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -109,6 +111,10 @@ interface Settings {
   baseURL?: string; // For custom Anthropic-compatible endpoints
   temperature?: number; // Sampling temperature (0-1)
   promptStyle?: 'suggested' | 'floyd' | 'claude'; // PHASE 1 ITEM 3: Prompt style selector
+  // P1-6: Multimedia API keys
+  openaiApiKey?: string;     // For DALL-E image generation
+  elevenLabsApiKey?: string; // For text-to-speech audio generation
+  zaiApiKey?: string;        // For CogVideoX video generation
 }
 
 // Provider configurations
@@ -526,6 +532,354 @@ app.get('/api/diagnostic/glm-vision', async (req, res) => {
   res.json(diagnostic);
 });
 
+// OpenAI Image Generation diagnostic endpoint (P1-4)
+app.get('/api/diagnostic/openai-image', async (req, res) => {
+  console.log('🎨 OpenAI Image Diagnostic - Starting...');
+  
+  const diagnostic = {
+    timestamp: new Date().toISOString(),
+    configured: false,
+    tests: [] as Array<{ name: string; status: string; result?: string; error?: string }>
+  };
+
+  // Check if OpenAI API key is configured
+  const openaiApiKey = process.env.OPENAI_API_KEY || (settings as any).openaiApiKey;
+  
+  if (!openaiApiKey) {
+    diagnostic.tests.push({
+      name: 'Configuration Check',
+      status: 'failed',
+      error: 'OpenAI API key not configured. Set OPENAI_API_KEY environment variable or openaiApiKey in settings.'
+    });
+    res.json(diagnostic);
+    return;
+  }
+
+  diagnostic.configured = true;
+  
+  // Test 1: Configure multimediaAPI
+  try {
+    multimediaAPI.configure({ openaiApiKey });
+    diagnostic.tests.push({
+      name: 'MultimediaAPI Configuration',
+      status: 'success',
+      result: 'OpenAI client initialized'
+    });
+  } catch (error: any) {
+    diagnostic.tests.push({
+      name: 'MultimediaAPI Configuration',
+      status: 'failed',
+      error: error.message
+    });
+    res.json(diagnostic);
+    return;
+  }
+
+  // Test 2: Image generation capability (minimal test)
+  try {
+    const result = await multimediaAPI.generateImage('A simple blue circle on white background', {
+      quality: 'low',
+      dimensions: { width: 1024, height: 1024 }
+    });
+    
+    if (result.success && result.data) {
+      diagnostic.tests.push({
+        name: 'Image Generation',
+        status: 'success',
+        result: `Generated ${result.metadata?.format || 'image'} (${Math.round(result.data.length / 1024)}KB base64)`
+      });
+    } else {
+      diagnostic.tests.push({
+        name: 'Image Generation',
+        status: 'failed',
+        error: result.error || 'Unknown error'
+      });
+    }
+  } catch (error: any) {
+    diagnostic.tests.push({
+      name: 'Image Generation',
+      status: 'failed',
+      error: error.message
+    });
+  }
+
+  console.log('🎨 OpenAI Image Diagnostic - Results:', JSON.stringify(diagnostic, null, 2));
+  res.json(diagnostic);
+});
+
+// ElevenLabs Audio Generation diagnostic endpoint (P1-5)
+app.get('/api/diagnostic/elevenlabs', async (req, res) => {
+  console.log('🔊 ElevenLabs Audio Diagnostic - Starting...');
+  
+  const diagnostic = {
+    timestamp: new Date().toISOString(),
+    configured: false,
+    tests: [] as Array<{ name: string; status: string; result?: string; error?: string }>
+  };
+
+  // Check if ElevenLabs API key is configured
+  const elevenLabsApiKey = process.env.ELEVENLABS_API_KEY || (settings as any).elevenLabsApiKey;
+  
+  if (!elevenLabsApiKey) {
+    diagnostic.tests.push({
+      name: 'Configuration Check',
+      status: 'failed',
+      error: 'ElevenLabs API key not configured. Set ELEVENLABS_API_KEY environment variable or elevenLabsApiKey in settings.'
+    });
+    res.json(diagnostic);
+    return;
+  }
+
+  diagnostic.configured = true;
+  
+  // Test 1: Configure multimediaAPI
+  try {
+    multimediaAPI.configure({ elevenLabsApiKey });
+    diagnostic.tests.push({
+      name: 'MultimediaAPI Configuration',
+      status: 'success',
+      result: 'ElevenLabs client initialized'
+    });
+  } catch (error: any) {
+    diagnostic.tests.push({
+      name: 'MultimediaAPI Configuration',
+      status: 'failed',
+      error: error.message
+    });
+    res.json(diagnostic);
+    return;
+  }
+
+  // Test 2: Get available voices
+  try {
+    const voices = await multimediaAPI.getVoices();
+    
+    if (voices && voices.length > 0) {
+      diagnostic.tests.push({
+        name: 'Voice List',
+        status: 'success',
+        result: `Found ${voices.length} voices: ${voices.slice(0, 3).map(v => v.name).join(', ')}${voices.length > 3 ? '...' : ''}`
+      });
+    } else {
+      diagnostic.tests.push({
+        name: 'Voice List',
+        status: 'warning',
+        result: 'No voices found or API returned empty list'
+      });
+    }
+  } catch (error: any) {
+    diagnostic.tests.push({
+      name: 'Voice List',
+      status: 'failed',
+      error: error.message
+    });
+  }
+
+  console.log('🔊 ElevenLabs Audio Diagnostic - Results:', JSON.stringify(diagnostic, null, 2));
+  res.json(diagnostic);
+});
+
+// ============================================
+// P2-1: Image Generation Endpoint
+// ============================================
+app.post('/api/generate/image', async (req, res) => {
+  const { prompt, options } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  // Configure multimedia API with current settings
+  multimediaAPI.configure({
+    openaiApiKey: settings.openaiApiKey || process.env.OPENAI_API_KEY,
+    elevenLabsApiKey: settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY,
+    zaiApiKey: settings.zaiApiKey || process.env.GLM_API_KEY,
+  });
+
+  try {
+    const result = await multimediaAPI.generateImage(prompt, options);
+
+    if (!result.success) {
+      return res.status(500).json({ error: result.error || 'Image generation failed' });
+    }
+
+    res.json({
+      success: true,
+      data: result.data,
+      metadata: result.metadata,
+    });
+  } catch (error: any) {
+    console.error('[Image Gen] Error:', error.message);
+    res.status(500).json({ error: error.message || 'Image generation failed' });
+  }
+});
+
+// ============================================
+// P2-4: Voices List Endpoint
+// ============================================
+app.get('/api/voices', async (req, res) => {
+  // Configure multimedia API with current settings
+  multimediaAPI.configure({
+    elevenLabsApiKey: settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY,
+  });
+
+  try {
+    const voices = await multimediaAPI.getVoices();
+    res.json({ voices });
+  } catch (error: any) {
+    console.error('[Voices] Error:', error.message);
+    res.status(500).json({ error: error.message || 'Failed to fetch voices' });
+  }
+});
+
+// ============================================
+// P2-3: Audio Generation Endpoint
+// ============================================
+app.post('/api/generate/audio', async (req, res) => {
+  const { text, voiceId, options } = req.body;
+
+  if (!text) {
+    return res.status(400).json({ error: 'Text is required' });
+  }
+
+  if (!voiceId) {
+    return res.status(400).json({ error: 'Voice ID is required' });
+  }
+
+  // Configure multimedia API with current settings
+  multimediaAPI.configure({
+    elevenLabsApiKey: settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY,
+  });
+
+  try {
+    const result = await multimediaAPI.generateAudio(text, voiceId, options);
+
+    if (!result.success) {
+      return res.status(500).json({ error: result.error || 'Audio generation failed' });
+    }
+
+    res.json({
+      success: true,
+      data: result.data,
+      metadata: result.metadata,
+    });
+  } catch (error: any) {
+    console.error('[Audio Gen] Error:', error.message);
+    res.status(500).json({ error: error.message || 'Audio generation failed' });
+  }
+});
+
+// ============================================
+// P2-2: Video Generation Endpoint (Async)
+// ============================================
+app.post('/api/generate/video', async (req, res) => {
+  const { prompt, options, imageUrl } = req.body;
+
+  if (!prompt) {
+    return res.status(400).json({ error: 'Prompt is required' });
+  }
+
+  // Configure multimedia API with current settings
+  multimediaAPI.configure({
+    zaiApiKey: settings.zaiApiKey || process.env.GLM_API_KEY,
+  });
+
+  // Create task in queue
+  const task = taskQueue.createTask({
+    type: 'video-generation',
+    metadata: { prompt, model: 'cogvideox-3' },
+  });
+
+  // Update to processing
+  taskQueue.updateStatus(task.id, 'processing');
+
+  try {
+    const result = await multimediaAPI.generateVideo(prompt, options, imageUrl);
+
+    if (!result.success) {
+      taskQueue.setError(task.id, result.error || 'Video generation failed');
+      return res.status(500).json({ error: result.error, taskId: task.id });
+    }
+
+    // Store external task ID for polling
+    taskQueue.updateMetadata(task.id, { externalTaskId: result.taskId });
+
+    res.json({
+      success: true,
+      taskId: task.id,
+      externalTaskId: result.taskId,
+      status: 'processing',
+      message: 'Video generation started. Poll /api/generate/status/:taskId for updates.',
+    });
+  } catch (error: any) {
+    taskQueue.setError(task.id, error.message);
+    console.error('[Video Gen] Error:', error.message);
+    res.status(500).json({ error: error.message || 'Video generation failed', taskId: task.id });
+  }
+});
+
+// ============================================
+// P2-6: Task Status Polling Endpoint
+// ============================================
+app.get('/api/generate/status/:taskId', async (req, res) => {
+  const { taskId } = req.params;
+
+  const task = taskQueue.getTask(taskId);
+
+  if (!task) {
+    return res.status(404).json({ error: 'Task not found' });
+  }
+
+  // If task is processing and has external task ID, poll external API
+  if (task.status === 'processing' && task.metadata?.externalTaskId) {
+    multimediaAPI.configure({
+      zaiApiKey: settings.zaiApiKey || process.env.GLM_API_KEY,
+    });
+
+    try {
+      const result = await multimediaAPI.getVideoResult(task.metadata.externalTaskId);
+
+      if (result.success && result.data) {
+        // Video is ready
+        taskQueue.setResult(task.id, {
+          data: result.data,
+          metadata: result.metadata,
+        });
+      } else if (result.success && result.taskId) {
+        // Still processing - update progress if available
+        taskQueue.updateStatus(task.id, 'processing');
+      } else if (!result.success) {
+        taskQueue.setError(task.id, result.error || 'Video generation failed');
+      }
+    } catch (error: any) {
+      console.error('[Status Poll] Error:', error.message);
+      // Don't fail the task on polling error, just log it
+    }
+  }
+
+  // Get updated task
+  const updatedTask = taskQueue.getTask(taskId);
+
+  res.json({
+    taskId: updatedTask!.id,
+    type: updatedTask!.type,
+    status: updatedTask!.status,
+    progress: updatedTask!.progress,
+    createdAt: updatedTask!.createdAt,
+    updatedAt: updatedTask!.updatedAt,
+    completedAt: updatedTask!.completedAt,
+    result: updatedTask!.result,
+    error: updatedTask!.error,
+  });
+});
+
+// ============================================
+// Task Queue Statistics Endpoint
+// ============================================
+app.get('/api/generate/stats', (req, res) => {
+  res.json(taskQueue.getStats());
+});
+
 // Get available providers and models
 app.get('/api/providers', (req, res) => {
   res.json({
@@ -534,8 +888,26 @@ app.get('/api/providers', (req, res) => {
       { id: 'anthropic-compatible', name: 'Anthropic-Compatible (Custom Endpoint)' },
       { id: 'openai', name: 'OpenAI' },
       { id: 'glm', name: 'Zai GLM (Zhipu)' },
+      // P1-7: Multimedia providers
+      { id: 'openai-images', name: 'OpenAI Images (DALL-E)' },
+      { id: 'elevenlabs', name: 'ElevenLabs (TTS)' },
+      { id: 'zai-video', name: 'Zai Video (CogVideoX)' },
     ],
     models: PROVIDER_MODELS,
+    // P1-7: Multimedia models registry
+    multimediaModels: {
+      'image-generation': [
+        { id: 'dall-e-3', name: 'DALL-E 3 (Recommended)', provider: 'openai' },
+        { id: 'dall-e-2', name: 'DALL-E 2 (Legacy)', provider: 'openai' },
+      ],
+      'video-generation': [
+        { id: 'cogvideox-3', name: 'CogVideoX-3', provider: 'zai' },
+      ],
+      'audio-generation': [
+        { id: 'eleven_turbo_v2', name: 'Eleven Turbo v2 (Fast)', provider: 'elevenlabs' },
+        { id: 'eleven_multilingual_v2', name: 'Eleven Multilingual v2 (Recommended)', provider: 'elevenlabs' },
+      ],
+    },
   });
 });
 
@@ -551,12 +923,16 @@ app.get('/api/settings', (req, res) => {
     baseURL: settings.baseURL,
     temperature: settings.temperature,
     promptStyle: settings.promptStyle,
+    // P1-6: Multimedia API keys
+    hasOpenaiApiKey: !!settings.openaiApiKey,
+    hasElevenLabsApiKey: !!settings.elevenLabsApiKey,
+    hasZaiApiKey: !!settings.zaiApiKey,
   });
 });
 
 // Update settings
 app.post('/api/settings', async (req, res) => {
-  const { provider, apiKey, model, systemPrompt, maxTokens, baseURL, temperature, promptStyle } = req.body;
+  const { provider, apiKey, model, systemPrompt, maxTokens, baseURL, temperature, promptStyle, openaiApiKey, elevenLabsApiKey, zaiApiKey } = req.body;
 
   if (provider !== undefined) settings.provider = provider;
   if (apiKey !== undefined) settings.apiKey = apiKey;
@@ -566,6 +942,10 @@ app.post('/api/settings', async (req, res) => {
   if (baseURL !== undefined) settings.baseURL = baseURL;
   if (temperature !== undefined) settings.temperature = temperature;
   if (promptStyle !== undefined) settings.promptStyle = promptStyle;
+  // P1-6: Multimedia API keys
+  if (openaiApiKey !== undefined) settings.openaiApiKey = openaiApiKey;
+  if (elevenLabsApiKey !== undefined) settings.elevenLabsApiKey = elevenLabsApiKey;
+  if (zaiApiKey !== undefined) settings.zaiApiKey = zaiApiKey;
 
   // Update browork with new settings
   if (settings.apiKey) {
@@ -574,6 +954,13 @@ app.post('/api/settings', async (req, res) => {
     broworkManager.setModel(settings.model);
     broworkManager.setProvider(settings.provider);
   }
+
+  // P1-6: Configure multimediaAPI with new keys
+  multimediaAPI.configure({
+    openaiApiKey: settings.openaiApiKey,
+    elevenLabsApiKey: settings.elevenLabsApiKey,
+    zaiApiKey: settings.zaiApiKey,
+  });
 
   await saveSettings();
 
@@ -636,6 +1023,48 @@ app.post('/api/test-key', async (req, res) => {
         model: response.model,
         message: 'Z.ai API key is valid'
       });
+    } else if (provider === 'openai-image') {
+      // P1-8: Test OpenAI DALL-E image generation
+      multimediaAPI.configure({ openaiApiKey: apiKey });
+      const result = await multimediaAPI.generateImage('A red dot', {
+        quality: 'low',
+        dimensions: { width: 1024, height: 1024 }
+      });
+      
+      if (result.success) {
+        res.json({
+          success: true,
+          model: 'dall-e-3',
+          message: 'OpenAI Image (DALL-E) API key is valid'
+        });
+      } else {
+        throw new Error(result.error || 'Image generation failed');
+      }
+    } else if (provider === 'elevenlabs') {
+      // P1-8: Test ElevenLabs TTS
+      multimediaAPI.configure({ elevenLabsApiKey: apiKey });
+      const voices = await multimediaAPI.getVoices();
+      
+      if (voices && voices.length > 0) {
+        res.json({
+          success: true,
+          model: 'eleven_multilingual_v2',
+          message: `ElevenLabs API key is valid (${voices.length} voices available)`
+        });
+      } else {
+        throw new Error('No voices found - check API key');
+      }
+    } else if (provider === 'zai-video') {
+      // P1-8: Test Zai Video API (just check configuration, actual test costs money)
+      if (apiKey && apiKey.length > 10) {
+        res.json({
+          success: true,
+          model: 'cogvideox-3',
+          message: 'Zai Video API key format is valid'
+        });
+      } else {
+        throw new Error('Invalid Zai Video API key format');
+      }
     } else {
       const client = new Anthropic({ apiKey });
       const response = await client.messages.create({

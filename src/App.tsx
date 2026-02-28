@@ -63,7 +63,7 @@ export default function App() {
     isExecuting: boolean;
   }>>([]);
   const [emergencyMode, setEmergencyMode] = useState(false);
-  const [thinkingContent, setThinkingContent] = useState('');
+  const [thinkingContent, _setThinkingContent] = useState('');
   const [chatMode, setChatMode] = useState<'floyd4' | 'streaming'>('streaming');
   const [showModeAlert, setShowModeAlert] = useState(false);
 
@@ -174,7 +174,6 @@ export default function App() {
     if ((!input.trim() && attachments.length === 0) || isStreaming || !currentSession) return;
 
     // Check if attachments require streaming mode (for vision support)
-    const hasImages = attachments.some(att => att.type === 'image');
     const hasVisionAttachments = attachments.some(att => 
       att.type === 'image' || att.type === 'document' || att.type === 'code'
     );
@@ -232,7 +231,7 @@ export default function App() {
             streamingContentRef.current += text;
             setStreamingContent(streamingContentRef.current);
           },
-          async (usage, sessionId) => {
+          async (_usage, _sessionId) => {
             setMessages(prev => [...prev, {
               role: 'assistant',
               content: streamingContentRef.current,
@@ -260,11 +259,12 @@ export default function App() {
               isExecuting: true,
             }]);
           },
-          (tool, id, result, success) => {
+          (_tool, id, result, success) => {
             setActiveToolCalls(prev => prev.map(tc =>
               tc.id === id ? { ...tc, result, success, isExecuting: false } : tc
             ));
           },
+          undefined, // onThinking callback - not used
           uploadedAttachments.length > 0 ? uploadedAttachments : undefined
         );
       } else {
@@ -444,7 +444,7 @@ export default function App() {
                   try {
                     const diagnostic = await api.getGLMDiagnostic();
                     console.log('GLM Diagnostic Result:', diagnostic);
-                    const successCount = diagnostic.tests.filter(t => t.status === 'success').length;
+                    const successCount = diagnostic.tests.filter((t: { status: string }) => t.status === 'success').length;
                     setStatusMessage(`🔍 Diagnostic complete: ${successCount}/${diagnostic.tests.length} tests passed`);
                   } catch (error) {
                     console.error('Diagnostic failed:', error);

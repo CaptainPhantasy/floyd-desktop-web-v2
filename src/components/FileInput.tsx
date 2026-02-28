@@ -23,22 +23,6 @@ const SUPPORTED_FILE_TYPES = {
   data: ['.json', '.csv', '.xml', '.yaml', '.yml'],
 };
 
-const MIME_TYPES = [
-  'image/*',
-  'video/*',
-  'application/pdf',
-  'application/msword',
-  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-  'text/*',
-  'application/json',
-  'application/xml',
-  'text/csv',
-  'text/yaml',
-  'text/x-yaml',
-].join(',');
-
-const ALL_SUPPORTED_TYPES = Object.values(SUPPORTED_FILE_TYPES).flat().join(',');
-
 const getFileType = (file: File): FileAttachment['type'] => {
   const ext = '.' + file.name.split('.').pop()?.toLowerCase();
   

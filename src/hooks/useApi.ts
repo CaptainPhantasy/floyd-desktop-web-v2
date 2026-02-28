@@ -37,7 +37,7 @@ export function useApi() {
     return fetchJson<Settings>('/settings');
   }, [fetchJson]);
 
-  const updateSettings = useCallback(async (settings: Partial<{ apiKey: string; model: string; systemPrompt: string; maxTokens: number }>) => {
+  const updateSettings = useCallback(async (settings: Partial<{ apiKey: string; model: string; systemPrompt: string; maxTokens: number; provider: string; temperature: number; baseURL: string }>) => {
     return fetchJson<{ success: boolean }>('/settings', {
       method: 'POST',
       body: JSON.stringify(settings),
@@ -283,7 +283,7 @@ export function useApi() {
     onError: (error: string) => void,
     onToolCall?: (tool: string, args: any, id: string) => void,
     onToolResult?: (tool: string, id: string, result: any, success: boolean) => void,
-    onThinking?: (content: string) => void,
+    _onThinking?: (content: string) => void,
     attachments?: Array<{
       id: string;
       name: string;

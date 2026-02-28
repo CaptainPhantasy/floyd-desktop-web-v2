@@ -29,4 +29,7 @@ export interface Settings {
   apiKeyPreview: string | null;
   systemPrompt?: string;
   maxTokens?: number;
+  provider?: string;
+  temperature?: number;
+  baseURL?: string;
 }
