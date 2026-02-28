@@ -54,7 +54,7 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
   const [audioLoading, setAudioLoading] = useState(false);
   const [audioError, setAudioError] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
-  // Audio element reference for playback control
+  // Audio element for playback control
 
   // Video state
   const [videoPrompt, setVideoPrompt] = useState('');
@@ -66,6 +66,8 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
   const [generatedVideo, setGeneratedVideo] = useState<string | null>(null);
   const [videoLoading, setVideoLoading] = useState(false);
   const [videoError, setVideoError] = useState<string | null>(null);
+  const [voicesLoading, setVoicesLoading] = useState(false);
+  const [voicesError, setVoicesError] = useState<string | null>(null);
 
   // Load voices on mount
   useEffect(() => {
@@ -99,14 +101,19 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
   }, [videoStatus, videoTaskId, api]);
 
   const loadVoices = async () => {
+    setVoicesLoading(true);
+    setVoicesError(null);
     try {
       const result = await api.getVoices();
       setVoices(result.voices);
       if (result.voices.length > 0) {
         setSelectedVoice(result.voices[0].id);
       }
-    } catch (err) {
+    } catch (err: any) {
       console.error('Failed to load voices:', err);
+      setVoicesError('Could not load voices. ElevenLabs API key may not be configured.');
+    } finally {
+      setVoicesLoading(false);
     }
   };
 
@@ -125,10 +132,20 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
       if (result.success && result.data) {
         setGeneratedImage(result.data);
       } else {
-        setImageError(result.error || 'Failed to generate image');
+        // Use structured error message with hint if available
+        const errorMsg = result.error || 'Failed to generate image';
+        const hint = (result as any).hint;
+        setImageError(hint ? `${errorMsg}\n\n💡 ${hint}` : errorMsg);
       }
     } catch (err: any) {
-      setImageError(err.message || 'Failed to generate image');
+      // Check for common error patterns
+      let errorMsg = err.message || 'Failed to generate image';
+      if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
+        errorMsg = 'Unable to connect to server. Please check if the server is running.';
+      } else if (err.status === 503) {
+        errorMsg = 'Service unavailable. API key may not be configured.';
+      }
+      setImageError(errorMsg);
     } finally {
       setImageLoading(false);
     }
@@ -147,10 +164,18 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
       if (result.success && result.data) {
         setGeneratedAudio(result.data);
       } else {
-        setAudioError(result.error || 'Failed to generate audio');
+        const errorMsg = result.error || 'Failed to generate audio';
+        const hint = (result as any).hint;
+        setAudioError(hint ? `${errorMsg}\n\n💡 ${hint}` : errorMsg);
       }
     } catch (err: any) {
-      setAudioError(err.message || 'Failed to generate audio');
+      let errorMsg = err.message || 'Failed to generate audio';
+      if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
+        errorMsg = 'Unable to connect to server. Please check if the server is running.';
+      } else if (err.status === 503) {
+        errorMsg = 'Service unavailable. ElevenLabs API key may not be configured.';
+      }
+      setAudioError(errorMsg);
     } finally {
       setAudioLoading(false);
     }
@@ -176,10 +201,18 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
         setVideoStatus('processing');
         setVideoProgress(0);
       } else {
-        setVideoError(result.error || 'Failed to start video generation');
+        const errorMsg = result.error || 'Failed to start video generation';
+        const hint = (result as any).hint;
+        setVideoError(hint ? `${errorMsg}\n\n💡 ${hint}` : errorMsg);
       }
     } catch (err: any) {
-      setVideoError(err.message || 'Failed to start video generation');
+      let errorMsg = err.message || 'Failed to start video generation';
+      if (errorMsg.includes('Failed to fetch') || errorMsg.includes('NetworkError')) {
+        errorMsg = 'Unable to connect to server. Please check if the server is running.';
+      } else if (err.status === 503) {
+        errorMsg = 'Service unavailable. GLM API key may not be configured.';
+      }
+      setVideoError(errorMsg);
     } finally {
       setVideoLoading(false);
     }
@@ -198,8 +231,20 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
       audio.play();
       setIsPlaying(true);
       audio.onended = () => setIsPlaying(false);
+      audio.onerror = () => {
+        setIsPlaying(false);
+        setAudioError('Failed to play audio. The file may be corrupted.');
+      };
     }
   }, [generatedAudio]);
+
+  // Cancel video generation
+  const handleCancelVideo = useCallback(() => {
+    setVideoStatus('idle');
+    setVideoTaskId(null);
+    setVideoProgress(0);
+    setVideoError('Video generation cancelled.');
+  }, []);
 
   if (!isOpen) return null;
 
@@ -316,9 +361,11 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
               </button>
 
               {imageError && (
-                <div className="flex items-center gap-2 text-red-400 text-sm">
-                  <AlertCircle className="w-4 h-4" />
-                  {imageError}
+                <div className="bg-red-900/30 border border-red-700 rounded-lg p-3">
+                  <div className="flex items-start gap-2 text-red-400 text-sm">
+                    <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span className="whitespace-pre-wrap">{imageError}</span>
+                  </div>
                 </div>
               )}
 
@@ -365,17 +412,36 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
                 <label className="block text-sm font-medium text-slate-300 mb-2">
                   Voice
                 </label>
-                <select
-                  value={selectedVoice}
-                  onChange={(e) => setSelectedVoice(e.target.value)}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white"
-                >
-                  {voices.map((voice) => (
-                    <option key={voice.id} value={voice.id}>
-                      {voice.name}
-                    </option>
-                  ))}
-                </select>
+                {voicesLoading ? (
+                  <div className="flex items-center gap-2 text-slate-400 text-sm py-2">
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Loading voices...
+                  </div>
+                ) : voicesError ? (
+                  <div className="space-y-2">
+                    <div className="text-red-400 text-sm">{voicesError}</div>
+                    <button
+                      onClick={loadVoices}
+                      className="text-sky-400 text-sm hover:underline"
+                    >
+                      Retry loading voices
+                    </button>
+                  </div>
+                ) : voices.length === 0 ? (
+                  <div className="text-slate-400 text-sm">No voices available</div>
+                ) : (
+                  <select
+                    value={selectedVoice}
+                    onChange={(e) => setSelectedVoice(e.target.value)}
+                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-white"
+                  >
+                    {voices.map((voice) => (
+                      <option key={voice.id} value={voice.id}>
+                        {voice.name}
+                      </option>
+                    ))}
+                  </select>
+                )}
               </div>
 
               <button
@@ -402,9 +468,11 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
               </button>
 
               {audioError && (
-                <div className="flex items-center gap-2 text-red-400 text-sm">
-                  <AlertCircle className="w-4 h-4" />
-                  {audioError}
+                <div className="bg-red-900/30 border border-red-700 rounded-lg p-3">
+                  <div className="flex items-start gap-2 text-red-400 text-sm">
+                    <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span className="whitespace-pre-wrap">{audioError}</span>
+                  </div>
                 </div>
               )}
 
@@ -509,17 +577,19 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
               </button>
 
               {videoError && (
-                <div className="flex items-center gap-2 text-red-400 text-sm">
-                  <AlertCircle className="w-4 h-4" />
-                  {videoError}
+                <div className="bg-red-900/30 border border-red-700 rounded-lg p-3">
+                  <div className="flex items-start gap-2 text-red-400 text-sm">
+                    <AlertCircle className="w-4 h-4 mt-0.5 flex-shrink-0" />
+                    <span className="whitespace-pre-wrap">{videoError}</span>
+                  </div>
                 </div>
               )}
 
               {videoStatus === 'processing' && (
-                <div className="space-y-2">
+                <div className="space-y-3">
                   <div className="flex items-center gap-2 text-yellow-400 text-sm">
                     <RefreshCw className="w-4 h-4 animate-spin" />
-                    Video is being generated. This may take a few minutes...
+                    Video is being generated. This may take 2-5 minutes...
                   </div>
                   <div className="w-full bg-slate-700 rounded-full h-2">
                     <div
@@ -527,6 +597,12 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
                       style={{ width: `${videoProgress}%` }}
                     />
                   </div>
+                  <button
+                    onClick={handleCancelVideo}
+                    className="text-slate-400 text-sm hover:text-white transition-colors"
+                  >
+                    Cancel generation
+                  </button>
                 </div>
               )}
 

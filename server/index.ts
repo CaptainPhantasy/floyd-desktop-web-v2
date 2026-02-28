@@ -690,8 +690,18 @@ app.post('/api/generate/image', async (req, res) => {
   }
 
   // Configure multimedia API with current settings
+  const openaiKey = settings.openaiApiKey || process.env.OPENAI_API_KEY;
+  
+  if (!openaiKey) {
+    return res.status(503).json({ 
+      error: 'OpenAI API key not configured',
+      hint: 'Add your OpenAI API key in Settings to enable image generation.',
+      code: 'MISSING_API_KEY'
+    });
+  }
+  
   multimediaAPI.configure({
-    openaiApiKey: settings.openaiApiKey || process.env.OPENAI_API_KEY,
+    openaiApiKey: openaiKey,
     elevenLabsApiKey: settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY,
     zaiApiKey: settings.zaiApiKey || process.env.GLM_API_KEY,
   });
@@ -700,7 +710,26 @@ app.post('/api/generate/image', async (req, res) => {
     const result = await multimediaAPI.generateImage(prompt, options);
 
     if (!result.success) {
-      return res.status(500).json({ error: result.error || 'Image generation failed' });
+      // Parse common error types for better user feedback
+      let errorMessage = result.error || 'Image generation failed';
+      let hint = '';
+      
+      if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
+        errorMessage = 'OpenAI rate limit exceeded';
+        hint = 'Please wait a moment and try again. You may have made too many requests.';
+      } else if (errorMessage.includes('content_policy') || errorMessage.includes('content policy')) {
+        errorMessage = 'Content policy violation';
+        hint = 'Your prompt may contain content that violates OpenAI\'s usage policy.';
+      } else if (errorMessage.includes('timeout')) {
+        errorMessage = 'Image generation timed out';
+        hint = 'The request took too long. Please try with a simpler prompt.';
+      }
+      
+      return res.status(500).json({ 
+        error: errorMessage, 
+        hint,
+        code: 'GENERATION_FAILED'
+      });
     }
 
     res.json({
@@ -743,12 +772,26 @@ app.post('/api/generate/audio', async (req, res) => {
   }
 
   if (!voiceId) {
-    return res.status(400).json({ error: 'Voice ID is required' });
+    return res.status(400).json({ 
+      error: 'Voice ID is required',
+      hint: 'Select a voice from the dropdown or fetch available voices from /api/voices',
+      code: 'MISSING_VOICE_ID'
+    });
   }
 
   // Configure multimedia API with current settings
+  const elevenLabsKey = settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY;
+  
+  if (!elevenLabsKey) {
+    return res.status(503).json({ 
+      error: 'ElevenLabs API key not configured',
+      hint: 'Add your ElevenLabs API key in Settings to enable audio generation.',
+      code: 'MISSING_API_KEY'
+    });
+  }
+
   multimediaAPI.configure({
-    elevenLabsApiKey: settings.elevenLabsApiKey || process.env.ELEVENLABS_API_KEY,
+    elevenLabsApiKey: elevenLabsKey,
   });
 
   try {
@@ -776,12 +819,26 @@ app.post('/api/generate/video', async (req, res) => {
   const { prompt, options, imageUrl } = req.body;
 
   if (!prompt) {
-    return res.status(400).json({ error: 'Prompt is required' });
+    return res.status(400).json({ 
+      error: 'Prompt is required',
+      hint: 'Describe the video you want to generate.',
+      code: 'MISSING_PROMPT'
+    });
   }
 
   // Configure multimedia API with current settings
+  const zaiKey = settings.zaiApiKey || process.env.GLM_API_KEY;
+  
+  if (!zaiKey) {
+    return res.status(503).json({ 
+      error: 'Zai/GLM API key not configured',
+      hint: 'Add your GLM API key in Settings to enable video generation.',
+      code: 'MISSING_API_KEY'
+    });
+  }
+
   multimediaAPI.configure({
-    zaiApiKey: settings.zaiApiKey || process.env.GLM_API_KEY,
+    zaiApiKey: zaiKey,
   });
 
   // Create task in queue
