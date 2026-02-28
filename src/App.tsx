@@ -17,6 +17,7 @@ import { EmergencyStopButton } from '@/components/EmergencyStopButton';
 import { ThinkingTerminal } from '@/components/ThinkingTerminal';
 import { ExportChatButton } from '@/components/ExportChatButton';
 import { FileInput } from '@/components/FileInput';
+import { MultimediaPanel } from '@/components/MultimediaPanel';
 import {
   Settings as SettingsIcon,
   Send,
@@ -26,7 +27,8 @@ import {
   Wrench,
   Sparkles,
   FolderKanban,
-  Users
+  Users,
+  Image as ImageIcon
 } from 'lucide-react';
 
 interface FileAttachment {
@@ -54,6 +56,7 @@ export default function App() {
   const [showSkills, setShowSkills] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [showBrowork, setShowBrowork] = useState(false);
+  const [showMultimedia, setShowMultimedia] = useState(false);
   const [activeToolCalls, setActiveToolCalls] = useState<Array<{
     id: string;
     tool: string;
@@ -483,6 +486,14 @@ export default function App() {
             </button>
             
             <button
+              onClick={() => setShowMultimedia(true)}
+              className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
+              title="Multimedia Studio"
+            >
+              <ImageIcon className="w-5 h-5" />
+            </button>
+            
+            <button
               onClick={() => setShowSettings(true)}
               className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
               title="Settings"
@@ -782,6 +793,12 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* Multimedia Panel */}
+      <MultimediaPanel
+        isOpen={showMultimedia}
+        onClose={() => setShowMultimedia(false)}
+      />
 
       {/* Mode Indicator Badge */}
       {chatMode === 'streaming' && (

@@ -403,6 +403,120 @@ export function useApi() {
     }>;
   }, []);
 
+  // ============================================
+  // Multimedia Generation APIs (Phase 3)
+  // ============================================
+
+  // Get available voices for TTS
+  const getVoices = useCallback(async () => {
+    return fetchJson<{ voices: Array<{ id: string; name: string }> }>('/voices');
+  }, [fetchJson]);
+
+  // Generate image from prompt
+  const generateImage = useCallback(async (prompt: string, options?: {
+    quality?: 'standard' | 'hd';
+    dimensions?: { width: number; height: number };
+  }) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchJson<{
+        success: boolean;
+        data?: string;
+        metadata?: { model: string; format: string; generationTime: number };
+        error?: string;
+      }>('/generate/image', {
+        method: 'POST',
+        body: JSON.stringify({ prompt, options }),
+      });
+      return result;
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchJson]);
+
+  // Generate audio from text
+  const generateAudio = useCallback(async (text: string, voiceId: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchJson<{
+        success: boolean;
+        data?: string;
+        metadata?: { model: string; format: string; generationTime: number };
+        error?: string;
+      }>('/generate/audio', {
+        method: 'POST',
+        body: JSON.stringify({ text, voiceId }),
+      });
+      return result;
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchJson]);
+
+  // Generate video (async - returns task ID)
+  const generateVideo = useCallback(async (prompt: string, options?: {
+    duration?: 5 | 10;
+    fps?: 30 | 60;
+    quality?: 'speed' | 'quality';
+    imageUrl?: string;
+  }) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const result = await fetchJson<{
+        success: boolean;
+        taskId?: string;
+        externalTaskId?: string;
+        status?: string;
+        message?: string;
+        error?: string;
+      }>('/generate/video', {
+        method: 'POST',
+        body: JSON.stringify({ prompt, options }),
+      });
+      return result;
+    } catch (err: any) {
+      setError(err.message);
+      throw err;
+    } finally {
+      setLoading(false);
+    }
+  }, [fetchJson]);
+
+  // Poll video generation status
+  const getVideoStatus = useCallback(async (taskId: string) => {
+    return fetchJson<{
+      taskId: string;
+      type: string;
+      status: 'pending' | 'processing' | 'completed' | 'failed';
+      progress?: number;
+      createdAt: number;
+      updatedAt: number;
+      completedAt?: number;
+      result?: { data?: string; metadata?: Record<string, any> };
+      error?: string;
+    }>(`/generate/status/${taskId}`);
+  }, [fetchJson]);
+
+  // Get generation queue stats
+  const getGenerationStats = useCallback(async () => {
+    return fetchJson<{
+      total: number;
+      pending: number;
+      processing: number;
+      completed: number;
+      failed: number;
+    }>('/generate/stats');
+  }, [fetchJson]);
+
   return {
     loading,
     error,
@@ -428,5 +542,12 @@ export function useApi() {
     getFloydOutput,
     stopFloydChat,
     getGLMDiagnostic,
+    // Multimedia generation methods
+    getVoices,
+    generateImage,
+    generateAudio,
+    generateVideo,
+    getVideoStatus,
+    getGenerationStats,
   };
 }
