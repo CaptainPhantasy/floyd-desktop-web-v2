@@ -21,11 +21,13 @@ import {
   Volume2,
   CheckCircle2,
   AlertCircle,
+  Send,
 } from 'lucide-react';
 
 interface MultimediaPanelProps {
   isOpen: boolean;
   onClose: () => void;
+  onSendToChat?: (media: { type: 'image' | 'audio' | 'video'; data: string; mimeType: string; prompt?: string; text?: string }) => void;
 }
 
 type Tab = 'image' | 'audio' | 'video';
@@ -35,7 +37,7 @@ interface Voice {
   name: string;
 }
 
-export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
+export function MultimediaPanel({ isOpen, onClose, onSendToChat }: MultimediaPanelProps) {
   const api = useApi();
   const [activeTab, setActiveTab] = useState<Tab>('image');
 
@@ -380,13 +382,24 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
                     alt="Generated"
                     className="w-full rounded-lg border border-slate-700"
                   />
-                  <button
-                    onClick={() => handleDownload(generatedImage, 'generated-image.png', 'image/png')}
-                    className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-                  >
-                    <Download className="w-4 h-4" />
-                    Download Image
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleDownload(generatedImage, 'generated-image.png', 'image/png')}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+                    >
+                      <Download className="w-4 h-4" />
+                      Download
+                    </button>
+                    {onSendToChat && (
+                      <button
+                        onClick={() => { onSendToChat({ type: 'image', data: generatedImage, mimeType: 'image/png', prompt: imagePrompt }); onClose(); }}
+                        className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg transition-colors"
+                      >
+                        <Send className="w-4 h-4" />
+                        Send to Chat
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>
@@ -495,8 +508,17 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
                       className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
                     >
                       <Download className="w-4 h-4" />
-                      Download Audio
+                      Download
                     </button>
+                    {onSendToChat && (
+                      <button
+                        onClick={() => { onSendToChat({ type: 'audio', data: generatedAudio, mimeType: 'audio/mpeg', text: audioText }); onClose(); }}
+                        className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg transition-colors"
+                      >
+                        <Send className="w-4 h-4" />
+                        Send to Chat
+                      </button>
+                    )}
                   </div>
                 </div>
               )}
@@ -617,13 +639,24 @@ export function MultimediaPanel({ isOpen, onClose }: MultimediaPanelProps) {
                     controls
                     className="w-full rounded-lg border border-slate-700"
                   />
-                  <button
-                    onClick={() => handleDownload(generatedVideo, 'generated-video.mp4', 'video/mp4')}
-                    className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
-                  >
-                    <Download className="w-4 h-4" />
-                    Download Video
-                  </button>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => handleDownload(generatedVideo, 'generated-video.mp4', 'video/mp4')}
+                      className="flex items-center gap-2 px-4 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors"
+                    >
+                      <Download className="w-4 h-4" />
+                      Download
+                    </button>
+                    {onSendToChat && (
+                      <button
+                        onClick={() => { onSendToChat({ type: 'video', data: generatedVideo, mimeType: 'video/mp4', prompt: videoPrompt }); onClose(); }}
+                        className="flex items-center gap-2 px-4 py-2 bg-sky-600 hover:bg-sky-500 rounded-lg transition-colors"
+                      >
+                        <Send className="w-4 h-4" />
+                        Send to Chat
+                      </button>
+                    )}
+                  </div>
                 </div>
               )}
             </div>

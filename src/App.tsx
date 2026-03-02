@@ -57,6 +57,7 @@ export default function App() {
   const [showProjects, setShowProjects] = useState(false);
   const [showBrowork, setShowBrowork] = useState(false);
   const [showMultimedia, setShowMultimedia] = useState(false);
+  const [mediaGenerating, setMediaGenerating] = useState(false);
   const [activeToolCalls, setActiveToolCalls] = useState<Array<{
     id: string;
     tool: string;
@@ -192,6 +193,24 @@ export default function App() {
     }
 
     const inputText = input.trim();
+    
+    // Check for media generation intent before normal chat
+    const mediaPatterns = {
+      image: /\b(generate|create|make|draw|sketch|paint)\s+(an?\s+)?(image|picture|photo|artwork|illustration)\b/i,
+      audio: /\b(say|speak|read|narrate)\s+.+|text\s+to\s+speech|tts\s+/i,
+      video: /\b(generate|create|make)\s+(a\s+)?(video|animation|gif)\b/i,
+    };
+    const hasMediaIntent = mediaPatterns.image.test(inputText) || 
+                           mediaPatterns.audio.test(inputText) || 
+                           mediaPatterns.video.test(inputText);
+    
+    if (hasMediaIntent && attachments.length === 0) {
+      // Route to media generation
+      setInput('');
+      handleMediaGeneration(inputText);
+      return;
+    }
+    
     setInput('');
     setIsStreaming(true);
     setStreamingContent('');
@@ -296,6 +315,98 @@ export default function App() {
       setStatusMessage(`Error: ${err.message}`);
       setIsStreaming(false);
     }
+  };
+
+  // Handle media generation from chat
+  const handleMediaGeneration = (message: string) => {
+    if (!currentSession) return;
+    
+    setMediaGenerating(true);
+    setStatusMessage('🎨 Generating media...');
+    
+    // Add user message
+    const userMessage: Message = {
+      role: 'user',
+      content: message,
+      timestamp: Date.now(),
+    };
+    setMessages(prev => [...prev, userMessage]);
+
+    api.generateMediaStream(message, {
+      onIntent: (intent, confidence) => {
+        setStatusMessage(`🎨 ${intent.replace('generate-', '')} (${Math.round(confidence * 100)}% confidence)`);
+      },
+      onProgress: (stage, progress, msg) => {
+        setStatusMessage(`🎨 ${stage}: ${progress}%${msg ? ` - ${msg}` : ''}`);
+      },
+      onMedia: (media) => {
+        const assistantMessage: Message = {
+          role: 'assistant',
+          content: `Generated ${media.type}:`,
+          timestamp: Date.now(),
+          media: {
+            type: media.type,
+            data: media.data,
+            mimeType: media.mimeType,
+            metadata: media.metadata,
+          },
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+        setMediaGenerating(false);
+        setStatusMessage('Ready');
+      },
+      onClarification: (msg) => {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: msg,
+          timestamp: Date.now(),
+        }]);
+        setMediaGenerating(false);
+        setStatusMessage('Ready');
+      },
+      onTaskCreated: (taskId) => {
+        setStatusMessage(`🎬 Video processing...`);
+        api.pollTaskProgress(taskId, {
+          onProgress: (status, progress) => {
+            setStatusMessage(`🎬 Video: ${status} (${progress}%)`);
+          },
+          onComplete: (result) => {
+            const assistantMessage: Message = {
+              role: 'assistant',
+              content: 'Generated video:',
+              timestamp: Date.now(),
+              media: {
+                type: 'video',
+                data: result.data,
+                mimeType: 'video/mp4',
+                metadata: result.metadata,
+              },
+            };
+            setMessages(prev => [...prev, assistantMessage]);
+            setMediaGenerating(false);
+            setStatusMessage('Ready');
+          },
+          onError: (error) => {
+            setMessages(prev => [...prev, {
+              role: 'assistant',
+              content: `Video failed: ${error}`,
+              timestamp: Date.now(),
+            }]);
+            setMediaGenerating(false);
+            setStatusMessage('Ready');
+          },
+        });
+      },
+      onError: (error) => {
+        setMessages(prev => [...prev, {
+          role: 'assistant',
+          content: `Generation failed: ${error}`,
+          timestamp: Date.now(),
+        }]);
+        setMediaGenerating(false);
+        setStatusMessage(`Error: ${error}`);
+      },
+    });
   };
 
   // Handle key press
@@ -657,7 +768,7 @@ export default function App() {
                 <FileInput
                   attachments={attachments}
                   onAttachmentsChange={setAttachments}
-                  disabled={status !== 'ready' || isStreaming}
+                  disabled={status !== 'ready' || isStreaming || mediaGenerating}
                 />
               </div>
             )}
@@ -674,7 +785,7 @@ export default function App() {
                 <FileInput
                   attachments={attachments}
                   onAttachmentsChange={setAttachments}
-                  disabled={status !== 'ready' || isStreaming}
+                  disabled={status !== 'ready' || isStreaming || mediaGenerating}
                 />
               </div>
 
@@ -684,7 +795,7 @@ export default function App() {
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyPress}
                 placeholder={status === 'ready' ? 'Type a message...' : 'Configure API key in settings...'}
-                disabled={status !== 'ready' || isStreaming}
+                disabled={status !== 'ready' || isStreaming || mediaGenerating}
                 className={cn(
                   'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3',
                   'resize-none focus:outline-none focus:ring-2 focus:ring-sky-500',
@@ -694,13 +805,13 @@ export default function App() {
               />
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || status !== 'ready' || isStreaming}
+                disabled={(!input.trim() && attachments.length === 0) || status !== 'ready' || isStreaming || mediaGenerating}
                 className={cn(
                   'px-4 py-2 bg-sky-600 rounded-lg transition-colors',
                   'hover:bg-sky-700 disabled:opacity-50 disabled:cursor-not-allowed',
                 )}
               >
-                {isStreaming ? (
+                {(isStreaming || mediaGenerating) ? (
                   <Loader2 className="w-5 h-5 animate-spin" />
                 ) : (
                   <Send className="w-5 h-5" />
@@ -798,6 +909,20 @@ export default function App() {
       <MultimediaPanel
         isOpen={showMultimedia}
         onClose={() => setShowMultimedia(false)}
+        onSendToChat={(media) => {
+          const assistantMessage: Message = {
+            role: 'assistant',
+            content: `Generated ${media.type}${media.prompt ? `: "${media.prompt}"` : ''}:`,
+            timestamp: Date.now(),
+            media: {
+              type: media.type,
+              data: media.data,
+              mimeType: media.mimeType,
+              metadata: { prompt: media.prompt, text: media.text },
+            },
+          };
+          setMessages(prev => [...prev, assistantMessage]);
+        }}
       />
 
       {/* Mode Indicator Badge */}

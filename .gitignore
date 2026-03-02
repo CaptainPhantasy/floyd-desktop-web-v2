@@ -34,3 +34,8 @@ release/
 *.app
 *.zip
 *.blockmap
+
+# Generated exports and test artifacts
+docs/exports/
+docs/_archived-pre-phase1/
+docs/exports/generated/

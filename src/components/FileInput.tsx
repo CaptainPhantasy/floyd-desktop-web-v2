@@ -87,6 +87,7 @@ export function FileInput({ attachments, onAttachmentsChange, disabled }: FileIn
         ref={fileInputRef}
         type="file"
         multiple
+        accept="image/*,video/*,.pdf,.doc,.docx,.txt,.md,.js,.ts,.tsx,.jsx,.py,.java,.c,.cpp,.cs,.go,.rb,.php,.html,.css,.json,.xml,.yaml,.yml,.csv"
         onChange={(e) => handleFileSelect(e.target.files)}
         className="hidden"
       />
