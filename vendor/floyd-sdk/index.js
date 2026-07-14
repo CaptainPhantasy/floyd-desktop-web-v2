@@ -45,6 +45,21 @@ export class FloydClient {
 
   health(signal) { return this.request("GET", "/api/health", undefined, signal); }
   state(signal) { return this.request("GET", "/api/state", undefined, signal); }
+  negotiateExperience(input, signal) {
+    return this.request("POST", "/api/experience/negotiate", input, signal);
+  }
+  experience(envelopeId = "primary", signal) {
+    return this.request("GET", `/api/experience/${encodeURIComponent(envelopeId)}`, undefined, signal);
+  }
+  updateExperience(envelopeId, patch, signal) {
+    return this.request("PATCH", `/api/experience/${encodeURIComponent(envelopeId)}`, patch, signal);
+  }
+  watchExperience(envelopeId = "primary", options = {}) {
+    return this.stream(`/api/experience/${encodeURIComponent(envelopeId)}/stream`, {
+      lastEventId: options.lastEventId,
+      signal: options.signal,
+    });
+  }
   submit(projectId, goal, signal) {
     return this.request("POST", "/api/runs", { project_id: projectId, goal }, signal);
   }
@@ -111,7 +126,7 @@ export class FloydClient {
   attachSession(sessionId, actor, options = {}) {
     return this.stream(`/api/sessions/${encodeURIComponent(sessionId)}/attach`, {
       method: "POST",
-      body: { actor },
+      body: { actor, ...(options.runId ? { run_id: options.runId } : {}) },
       lastEventId: options.lastEventId,
       signal: options.signal,
     });

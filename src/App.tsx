@@ -3,9 +3,9 @@
  */
 
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { useApi } from '@/hooks/useApi';
+import { ApiError, useApi } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
-import type { Session, Message } from '@/types';
+import type { ExperienceEnvelope, Session, Message } from '@/types';
 import { SettingsModal } from '@/components/SettingsModal';
 import { Sidebar } from '@/components/Sidebar';
 import { ChatMessage } from '@/components/ChatMessage';
@@ -53,6 +53,85 @@ export default function App() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const streamingContentRef = useRef<string>('');
+  const envelopeRef = useRef<ExperienceEnvelope | null>(null);
+  const currentSessionRef = useRef<Session | null>(null);
+  const restoreGenerationRef = useRef(0);
+  const restoringRef = useRef(false);
+  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const publishQueueRef = useRef<Promise<void>>(Promise.resolve());
+
+  useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
+
+  const surfaceState = (envelope: ExperienceEnvelope) => ({
+    surface_id: 'desktop',
+    sdk_version: '1.0.0',
+    capabilities: ['coding-runs', 'drafts', 'experience-stream', 'transcript-restore'],
+    transcript_cursor: Number(envelope.surfaces.desktop?.transcript_cursor ?? envelope.transcript_cursor ?? 0),
+    transcript_epoch: envelope.transcript_epoch,
+    last_event_id: envelope.last_event_id,
+  });
+
+  const cancelPendingDraft = () => {
+    if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    draftTimerRef.current = null;
+  };
+
+  const publishExperience = (change: Record<string, unknown>): Promise<void> => {
+    const publish = async () => {
+      const base = envelopeRef.current;
+      if (!base || restoringRef.current) return;
+      try {
+        envelopeRef.current = await api.updateExperience(base.id, {
+          expected_revision: base.revision,
+          ...change,
+          surface: surfaceState(base),
+        });
+      } catch (error) {
+        if (error instanceof ApiError && error.status === 409) {
+          envelopeRef.current = await api.getExperience(base.id);
+          setStatusMessage('Experience changed on another surface. Latest Core state kept; review before publishing again.');
+          return;
+        }
+        setStatusMessage(`Experience error: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    };
+    const queued = publishQueueRef.current.then(publish, publish);
+    publishQueueRef.current = queued.catch(() => {});
+    return queued;
+  };
+
+  const applyEnvelope = async (envelope: ExperienceEnvelope, force = false) => {
+    if (!force && envelope.revision <= (envelopeRef.current?.revision ?? -1)) return;
+    const priorRun = envelopeRef.current?.active.run_id;
+    envelopeRef.current = envelope;
+    restoringRef.current = true;
+    const generation = ++restoreGenerationRef.current;
+    try {
+      if (document.activeElement !== inputRef.current) setInput(envelope.composer_draft || '');
+      const { run_id: runId, session_id: coreSessionId, project_id: projectId } = envelope.active;
+      if (!runId || !coreSessionId) return;
+      if (!force && priorRun === runId && currentSessionRef.current?.floydRunId === runId) return;
+
+      const listed = await api.getSessions();
+      let projection = listed.find((session) => session.floydRunId === runId);
+      if (!projection) {
+        projection = await api.createSession({
+          floydRunId: runId,
+          floydSessionId: coreSessionId,
+          ...(projectId ? { floydProjectId: projectId } : {}),
+        });
+      }
+      const session = await api.getSession(projection.id);
+      const transcript = await api.restoreTranscript(coreSessionId, runId);
+      if (generation !== restoreGenerationRef.current) return;
+      const restored = { ...session, messages: transcript.length ? transcript : session.messages };
+      setSessions(listed.some((item) => item.id === restored.id) ? listed : [restored, ...listed]);
+      setCurrentSession(restored);
+      setMessages(restored.messages);
+    } finally {
+      if (generation === restoreGenerationRef.current) restoringRef.current = false;
+    }
+  };
 
   // Scroll to bottom
   const scrollToBottom = useCallback(() => {
@@ -65,23 +144,21 @@ export default function App() {
 
   // Initialize
   useEffect(() => {
+    const watchAbort = new AbortController();
     async function init() {
       try {
         const health = await api.checkHealth();
-        // Load sessions
-        const sessionList = await api.getSessions();
-        setSessions(sessionList);
-        
-        // Create or load session
-        if (sessionList.length > 0) {
-          const session = await api.getSession(sessionList[0].id);
+        await api.negotiateExperience();
+        const envelope = await api.getExperience();
+        await applyEnvelope(envelope, true);
+
+        if (!envelope.active.run_id) {
+          const sessionList = await api.getSessions();
+          setSessions(sessionList);
+          const session = sessionList.length ? await api.getSession(sessionList[0].id) : await api.createSession();
+          setSessions(sessionList.length ? sessionList : [session]);
           setCurrentSession(session);
           setMessages(session.messages);
-        } else {
-          const session = await api.createSession();
-          setSessions([session]);
-          setCurrentSession(session);
-          setMessages([]);
         }
         
         setStatus('ready');
@@ -91,13 +168,23 @@ export default function App() {
         setStatusMessage(err.message || 'Failed to connect to server');
       }
     }
-    
-    init();
+    void init().then(() => api.watchExperience(
+      (envelope) => applyEnvelope(envelope),
+      watchAbort.signal,
+      String(envelopeRef.current?.revision ?? 0),
+    )).catch((error) => {
+      if (!watchAbort.signal.aborted) setStatusMessage(`Experience stream error: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    return () => {
+      watchAbort.abort();
+      if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
+    };
   }, []);
 
   // Handle send message
   const handleSend = async () => {
     if (!input.trim() || isStreaming || !currentSession) return;
+    cancelPendingDraft();
     
     const userMessage: Message = {
       role: 'user',
@@ -122,7 +209,7 @@ export default function App() {
           setStreamingContent(streamingContentRef.current);
         },
         // onDone
-        async (usage, sessionId) => {
+        async (usage, sessionId, binding) => {
           const fullContent = streamingContentRef.current;
           if (fullContent) {
             setMessages(prev => [...prev, {
@@ -139,6 +226,17 @@ export default function App() {
           // Refresh sessions list
           const sessionList = await api.getSessions();
           setSessions(sessionList);
+          if (binding?.floydRunId && binding.floydSessionId) {
+            await publishExperience({
+              active: {
+                project_id: binding.floydProjectId ?? null,
+                session_id: binding.floydSessionId,
+                run_id: binding.floydRunId,
+              },
+              selected_view: 'desktop-chat',
+              composer_draft: '',
+            });
+          }
         },
         // onError
         (error) => {
@@ -183,10 +281,16 @@ export default function App() {
   // Handle new session
   const handleNewSession = async () => {
     try {
+      cancelPendingDraft();
       const session = await api.createSession();
       setSessions(prev => [session, ...prev]);
       setCurrentSession(session);
       setMessages([]);
+      await publishExperience({
+        active: { project_id: null, session_id: null, run_id: null },
+        selected_view: 'desktop-new-chat',
+        composer_draft: '',
+      });
       inputRef.current?.focus();
     } catch (err: any) {
       setStatusMessage(`Error: ${err.message}`);
@@ -196,9 +300,20 @@ export default function App() {
   // Handle select session
   const handleSelectSession = async (sessionId: string) => {
     try {
+      cancelPendingDraft();
       const session = await api.getSession(sessionId);
       setCurrentSession(session);
       setMessages(session.messages);
+      if (session.floydRunId && session.floydSessionId) {
+        await publishExperience({
+          active: {
+            project_id: session.floydProjectId ?? null,
+            session_id: session.floydSessionId,
+            run_id: session.floydRunId,
+          },
+          selected_view: 'desktop-chat',
+        });
+      }
     } catch (err: any) {
       setStatusMessage(`Error: ${err.message}`);
     }
@@ -453,7 +568,12 @@ export default function App() {
             <textarea
               ref={inputRef}
               value={input}
-              onChange={(e) => setInput(e.target.value)}
+              onChange={(e) => {
+                const value = e.target.value;
+                setInput(value);
+                cancelPendingDraft();
+                draftTimerRef.current = setTimeout(() => void publishExperience({ composer_draft: value }), 350);
+              }}
               onKeyDown={handleKeyPress}
               placeholder={status === 'ready' ? 'Describe the coding outcome...' : 'Waiting for Floyd Core...'}
               disabled={status !== 'ready' || isStreaming}

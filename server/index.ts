@@ -20,6 +20,7 @@ import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
 import { WebSocketMCPServer } from './ws-mcp-server.js';
 import { FloydApiError, FloydCoreBridge } from './floyd-core.js';
+import { registerExperienceRoutes } from './experience-adapter.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -72,6 +73,7 @@ interface Session {
   folder?: string;        // Phase 3, Task 3.2
   floydRunId?: string;
   floydSessionId?: string;
+  floydProjectId?: string;
 }
 
 type Provider = 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
@@ -139,6 +141,7 @@ let settings: Settings = {
 // Sessions store
 const sessions: Map<string, Session> = new Map();
 const floydCore = new FloydCoreBridge();
+registerExperienceRoutes(app, floydCore);
 
 // Initialize data directory
 async function initDataDir() {
@@ -689,6 +692,9 @@ app.get('/api/sessions', (req, res) => {
       pinned: s.pinned,
       archived: s.archived,
       folder: s.folder,
+      floydRunId: s.floydRunId,
+      floydSessionId: s.floydSessionId,
+      floydProjectId: s.floydProjectId,
     }))
     .sort((a, b) => b.updated - a.updated);
   
@@ -697,12 +703,16 @@ app.get('/api/sessions', (req, res) => {
 
 // Create session
 app.post('/api/sessions', async (req, res) => {
+  const binding = req.body && typeof req.body === 'object' ? req.body as Record<string, unknown> : {};
   const session: Session = {
     id: randomUUID(),
     title: 'New Chat',
     created: Date.now(),
     updated: Date.now(),
     messages: [],
+    ...(typeof binding.floydRunId === 'string' ? { floydRunId: binding.floydRunId } : {}),
+    ...(typeof binding.floydSessionId === 'string' ? { floydSessionId: binding.floydSessionId } : {}),
+    ...(typeof binding.floydProjectId === 'string' ? { floydProjectId: binding.floydProjectId } : {}),
   };
   
   sessions.set(session.id, session);
@@ -1239,6 +1249,7 @@ app.post('/api/core/chat/stream', async (req, res) => {
       const run = await floydCore.client.run(created.run_id, abort.signal);
       session.floydRunId = created.run_id;
       session.floydSessionId = String(run.session_id);
+      session.floydProjectId = projectId;
     }
 
     session.messages.push({ role: 'user', content: message.trim(), timestamp: Date.now() });
@@ -1274,7 +1285,13 @@ app.post('/api/core/chat/stream', async (req, res) => {
       if (fullResponse) session.messages.push({ role: 'assistant', content: fullResponse, timestamp: Date.now() });
       session.updated = Date.now();
       await saveSession(session);
-      res.write(`data: ${JSON.stringify({ type: 'done', sessionId: session.id, runId: session.floydRunId })}\n\n`);
+      res.write(`data: ${JSON.stringify({
+        type: 'done',
+        sessionId: session.id,
+        runId: session.floydRunId,
+        coreSessionId: session.floydSessionId,
+        projectId: session.floydProjectId,
+      })}\n\n`);
       res.end();
     }
   } catch (error) {
