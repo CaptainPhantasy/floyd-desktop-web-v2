@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useApi } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
-import type { Session, Message, Settings } from '@/types';
+import type { Session, Message } from '@/types';
 import { SettingsModal } from '@/components/SettingsModal';
 import { Sidebar } from '@/components/Sidebar';
 import { ChatMessage } from '@/components/ChatMessage';
@@ -35,7 +35,6 @@ export default function App() {
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamingContent, setStreamingContent] = useState('');
-  const [_settings, setSettings] = useState<Settings | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [status, setStatus] = useState<'loading' | 'ready' | 'no-key' | 'error'>('loading');
   const [statusMessage, setStatusMessage] = useState('');
@@ -69,16 +68,6 @@ export default function App() {
     async function init() {
       try {
         const health = await api.checkHealth();
-        const settingsData = await api.getSettings();
-        setSettings(settingsData);
-        
-        if (!health.hasApiKey) {
-          setStatus('no-key');
-          setStatusMessage('API key not configured. Click Settings to add your Anthropic API key.');
-          setShowSettings(true);
-          return;
-        }
-        
         // Load sessions
         const sessionList = await api.getSessions();
         setSessions(sessionList);
@@ -239,13 +228,10 @@ export default function App() {
     }
   };
 
-  // Handle settings save
+  // Re-check the centralized runtime when the read-only panel closes.
   const handleSettingsSave = async () => {
-    const settingsData = await api.getSettings();
-    setSettings(settingsData);
-    
     const health = await api.checkHealth();
-    if (health.hasApiKey) {
+    if (health.status === 'ok') {
       setStatus('ready');
       setStatusMessage(`Connected to ${health.model}`);
     }
@@ -328,7 +314,7 @@ export default function App() {
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {messages.length === 0 && !isStreaming && (
             <div className="flex flex-col items-center justify-center h-full max-w-2xl mx-auto px-4">
-              <div className="text-6xl mb-4">🤖</div>
+              <div className="text-4xl font-black tracking-[0.3em] mb-4" aria-hidden="true">F</div>
               <h2 className="text-2xl font-semibold text-white mb-2">Welcome to Floyd Desktop</h2>
               <p className="text-slate-400 text-center mb-8">
                 Your personal AI assistant with full system access. Free from API costs.
@@ -376,7 +362,7 @@ export default function App() {
                   <SettingsIcon className="w-5 h-5 text-slate-400" />
                   <div>
                     <div className="text-sm font-medium">Settings</div>
-                    <div className="text-xs text-slate-400">API & model config</div>
+                    <div className="text-xs text-slate-400">Core runtime status</div>
                   </div>
                 </button>
               </div>
@@ -469,7 +455,7 @@ export default function App() {
               value={input}
               onChange={(e) => setInput(e.target.value)}
               onKeyDown={handleKeyPress}
-              placeholder={status === 'ready' ? 'Type a message...' : 'Configure API key in settings...'}
+              placeholder={status === 'ready' ? 'Describe the coding outcome...' : 'Waiting for Floyd Core...'}
               disabled={status !== 'ready' || isStreaming}
               className={cn(
                 'flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3',

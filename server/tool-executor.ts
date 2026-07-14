@@ -601,7 +601,7 @@ export class ToolExecutor {
         const keys = Object.keys(node).sort();
         for (const key of keys) {
           const isDir = Object.keys(node[key]).length > 0;
-          result += `${indent}${isDir ? '📁' : '📄'} ${key}\n`;
+          result += `${indent}${isDir ? '[DIR]' : '[FILE]'} ${key}\n`;
           result += formatTree(node[key], indent + '  ');
         }
         return result;

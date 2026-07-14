@@ -35,6 +35,10 @@ export class WebSocketMCPServer {
     this.port = port;
     this.server = createHttpServer();
     this.wss = new WebSocketServer({ server: this.server });
+    // Bind failures are emitted by both the HTTP server and WebSocketServer.
+    // Consume the WebSocket-side event so start() can reject to its caller
+    // instead of crashing the entire Desktop process.
+    this.wss.on('error', () => {});
     
     this.setupWebSocket();
   }

@@ -9,7 +9,7 @@ import express from 'express';
 import cors from 'cors';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -20,6 +20,7 @@ import { SkillsManager, Skill } from './skills-manager.js';
 import { ProjectsManager, Project } from './projects-manager.js';
 import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browork-manager.js';
 import { WebSocketMCPServer } from './ws-mcp-server.js';
+import { FloydApiError, FloydCoreBridge } from './floyd-core.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -71,6 +72,8 @@ interface Session {
   pinned?: boolean;       // Phase 1, Task 1.4
   archived?: boolean;     // Phase 3, Task 3.3
   folder?: string;        // Phase 3, Task 3.2
+  floydRunId?: string;
+  floydSessionId?: string;
 }
 
 type Provider = 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
@@ -137,6 +140,7 @@ let settings: Settings = {
 
 // Sessions store
 const sessions: Map<string, Session> = new Map();
+const floydCore = new FloydCoreBridge();
 
 // Initialize data directory
 async function initDataDir() {
@@ -261,6 +265,28 @@ app.get('/api/health', (req, res) => {
     provider: settings.provider,
     model: settings.model 
   });
+});
+
+// Floyd Core is the only authority for coding runs. Provider credentials and
+// the loopback gateway token remain in this server process and are never sent
+// to the browser pane.
+app.get('/api/core/health', async (req, res) => {
+  const abort = new AbortController();
+  req.once('aborted', () => abort.abort());
+  try {
+    const health = await floydCore.client.health(abort.signal);
+    const engine = health.engine as Record<string, unknown> | undefined;
+    res.json({
+      status: health.ok && engine?.ok ? 'ok' : 'degraded',
+      hasApiKey: true,
+      model: 'Floyd Core / OpenCode SDK',
+      core: health,
+    });
+  } catch (error) {
+    if (error instanceof FloydApiError) return res.status(error.status).json(error.payload);
+    const message = error instanceof Error ? error.message : String(error);
+    res.status(503).json({ error: message });
+  }
 });
 
 // Get available providers and models
@@ -674,7 +700,7 @@ app.get('/api/sessions', (req, res) => {
 // Create session
 app.post('/api/sessions', async (req, res) => {
   const session: Session = {
-    id: uuidv4(),
+    id: randomUUID(),
     title: 'New Chat',
     created: Date.now(),
     updated: Date.now(),
@@ -1095,7 +1121,7 @@ app.post('/api/chat', async (req, res) => {
   let session = sessions.get(sessionId);
   if (!session) {
     session = {
-      id: sessionId || uuidv4(),
+      id: sessionId || randomUUID(),
       title: message.slice(0, 50) + (message.length > 50 ? '...' : ''),
       created: Date.now(),
       updated: Date.now(),
@@ -1187,6 +1213,89 @@ function getOpenAITools() {
   }));
 }
 
+/**
+ * Natural-language coding stream backed exclusively by Floyd Core.
+ *
+ * The incoming request and outgoing response both monitor disconnects. Either
+ * one aborts the SDK fetch immediately; the SDK's generator then cancels its
+ * reader in `finally`, releasing the Core response buffer and loopback socket.
+ */
+app.post('/api/core/chat/stream', async (req, res) => {
+  const { sessionId, message } = req.body as { sessionId?: string; message?: string };
+  if (!sessionId || !message?.trim()) return res.status(400).json({ error: 'sessionId and message are required' });
+
+  const session = sessions.get(sessionId);
+  if (!session) return res.status(404).json({ error: 'Session not found' });
+
+  const abort = new AbortController();
+  const cancel = () => abort.abort();
+  req.once('aborted', cancel);
+  res.once('close', cancel);
+
+  try {
+    if (session.floydSessionId) {
+      await floydCore.client.steer(session.floydSessionId, message.trim(), 'floyd-desktop', abort.signal);
+    } else {
+      const projectId = await floydCore.resolveProject(projectsManager.getActive()?.rootPath, abort.signal);
+      const created = await floydCore.client.submit(projectId, message.trim(), abort.signal);
+      const run = await floydCore.client.run(created.run_id, abort.signal);
+      session.floydRunId = created.run_id;
+      session.floydSessionId = String(run.session_id);
+    }
+
+    session.messages.push({ role: 'user', content: message.trim(), timestamp: Date.now() });
+    session.updated = Date.now();
+    await saveSession(session);
+
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    let fullResponse = '';
+    for await (const event of floydCore.client.attachSession(session.floydSessionId, 'floyd-desktop', { signal: abort.signal })) {
+      if (abort.signal.aborted) break;
+      const envelope = (event.data ?? {}) as Record<string, unknown>;
+      const data = (envelope.data ?? {}) as Record<string, unknown>;
+      if (event.type === 'token' && envelope.channel === 'text') {
+        const content = String(data.delta ?? data.text ?? '');
+        fullResponse += content;
+        res.write(`data: ${JSON.stringify({ type: 'text', content })}\n\n`);
+      } else if (event.type === 'tool_call_start') {
+        res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: data.tool ?? data.name ?? 'tool', args: data.input ?? {}, id: event.id ?? '' })}\n\n`);
+      } else if (event.type === 'tool_call_finish') {
+        res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: data.tool ?? data.name ?? 'tool', result: data.output ?? data, success: true, id: event.id ?? '' })}\n\n`);
+      } else if (event.type === 'error') {
+        res.write(`data: ${JSON.stringify({ type: 'error', error: data.message ?? data.error ?? data, coreEvent: event })}\n\n`);
+      } else if (event.type === 'done') {
+        break;
+      }
+    }
+
+    if (!abort.signal.aborted) {
+      if (fullResponse) session.messages.push({ role: 'assistant', content: fullResponse, timestamp: Date.now() });
+      session.updated = Date.now();
+      await saveSession(session);
+      res.write(`data: ${JSON.stringify({ type: 'done', sessionId: session.id, runId: session.floydRunId })}\n\n`);
+      res.end();
+    }
+  } catch (error) {
+    if (abort.signal.aborted) return;
+    if (!res.headersSent && error instanceof FloydApiError) return res.status(error.status).json(error.payload);
+    const detail = error instanceof FloydApiError
+      ? { status: error.status, payload: error.payload, message: error.message }
+      : { message: error instanceof Error ? error.message : String(error) };
+    if (!res.headersSent) return res.status(503).json(detail);
+    res.write(`data: ${JSON.stringify({ type: 'error', error: detail.message, detail })}\n\n`);
+    res.end();
+  } finally {
+    req.off('aborted', cancel);
+    res.off('close', cancel);
+  }
+});
+
+// Legacy direct-provider path retained for migration only. The coding pane no
+// longer invokes it; removal requires a separate compatibility decision.
 // Send message (streaming with tool use) - supports both Anthropic and OpenAI
 app.post('/api/chat/stream', async (req, res) => {
   const { sessionId, message, enableTools = true } = req.body;
@@ -1198,7 +1307,7 @@ app.post('/api/chat/stream', async (req, res) => {
   let session = sessions.get(sessionId);
   if (!session) {
     session = {
-      id: sessionId || uuidv4(),
+      id: sessionId || randomUUID(),
       title: message.slice(0, 50) + (message.length > 50 ? '...' : ''),
       created: Date.now(),
       updated: Date.now(),
@@ -1432,6 +1541,7 @@ app.get('*', (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 3001;
+const MCP_WS_PORT = Number(process.env.MCP_WS_PORT || 3005);
 
 // Also start WebSocket MCP server for Chrome extension
 initDataDir().then(async () => {
@@ -1443,13 +1553,13 @@ initDataDir().then(async () => {
 
   // Start WebSocket MCP server for Chrome extension
   try {
-    wsMcpServer = new WebSocketMCPServer(3005);
+    wsMcpServer = new WebSocketMCPServer(MCP_WS_PORT);
     wsMcpServer.registerTools([...BUILTIN_TOOLS]);
     await wsMcpServer.start();
-    console.log('[Floyd Web Server] WebSocket MCP server started on port 3005 for Chrome extension');
+    console.log(`[Floyd Web Server] WebSocket MCP server started on port ${MCP_WS_PORT} for Chrome extension`);
   } catch (error: any) {
     if (error.code === 'EADDRINUSE') {
-      console.log('[Floyd Web Server] Port 3005 already in use - WebSocket MCP server not started');
+      console.log(`[Floyd Web Server] Port ${MCP_WS_PORT} already in use - WebSocket MCP server not started`);
       console.log('[Floyd Web Server] Chrome extension will connect to existing MCP server');
     } else {
       console.error('[Floyd Web Server] Failed to start WebSocket MCP server:', error);

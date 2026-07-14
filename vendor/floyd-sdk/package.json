@@ -1,0 +1,9 @@
+{
+  "name": "@floyd/sdk",
+  "version": "0.1.0-floyd-desktop.1",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "files": ["index.js", "index.d.ts"],
+  "description": "Pinned zero-dependency Floyd Core client snapshot"
+}

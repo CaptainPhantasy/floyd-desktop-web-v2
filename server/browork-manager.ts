@@ -6,7 +6,7 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS } from './mcp-client.js';
 
@@ -73,7 +73,7 @@ export class BroworkManager {
 
   createTask(name: string, description: string): AgentTask {
     const task: AgentTask = {
-      id: uuidv4(),
+      id: randomUUID(),
       name,
       description,
       status: 'pending',

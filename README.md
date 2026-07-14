@@ -1,14 +1,14 @@
 # Floyd Desktop
 
-AI Assistant Desktop Application - Web Version
+Natural-language coding desktop backed by Floyd Core.
 
 ## Overview
 
-Floyd Desktop is an AI-powered assistant application with support for multiple LLM providers, tool execution via MCP (Model Context Protocol), and a modern responsive web interface.
+Floyd Desktop is a presentation surface. It does not own provider credentials or call providers directly. The coding pane talks to its server-side `@floyd/sdk` bridge, Floyd Core owns durable runs and policy, and Core delegates execution to its managed OpenCode SDK runtime.
 
 ## Features
 
-- **Multi-Provider Support**: Anthropic Claude, OpenAI, GLM, and custom endpoints
+- **Central Model Routing**: Floyd Core owns provider and model selection
 - **MCP Tool Integration**: Execute tools via Model Context Protocol servers
 - **Streaming Responses**: Real-time streaming of AI responses
 - **Session Management**: Persistent chat sessions with history
@@ -41,13 +41,23 @@ npm start
 
 ## Environment
 
-Create a `.env.local` file:
+The default configuration connects to the loopback Core and reads its private gateway token from the canonical runtime directory. Override only when the runtime is installed elsewhere:
 
 ```env
-ANTHROPIC_API_KEY=your_key_here
-OPENAI_API_KEY=your_key_here
-# Add other provider keys as needed
+FLOYD_CORE_URL=http://127.0.0.1:41414
+FLOYD_GATEWAY_TOKEN_FILE=/Volumes/Storage/FLOYD_RUNTIME/core/gateway.token
+# Required when Core has more than one registered project and Desktop has no
+# active project with an exact rootPath match.
+FLOYD_PROJECT_ID=project_id_from_floyd_core
+# Optional Chrome extension bridge port. A bind failure does not stop Desktop.
+MCP_WS_PORT=3005
 ```
+
+Never place a provider key or the Floyd gateway token in browser storage, a URL, or a command-line argument.
+
+## Migration boundary
+
+The rendered coding pane uses only `/api/core/health` and `/api/core/chat/stream`. Legacy direct-provider server routes remain temporarily for compatibility with older callers, but the current UI cannot invoke them. Removing those routes and their Anthropic/OpenAI dependencies is a separate breaking migration.
 
 ## Project Structure
 
@@ -65,4 +75,4 @@ MIT License - see [LICENSE](LICENSE) file
 
 ## Governing Document
 
-See [FLOYD.MD](FLOYD.MD) for repository governance and agent operating instructions.
+This repository currently has no checked-in `FLOYD.md`; the upstream README link was stale.

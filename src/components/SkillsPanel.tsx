@@ -138,7 +138,7 @@ export function SkillsPanel({ isOpen, onClose }: SkillsPanelProps) {
                         key={skill.id}
                         className="text-xs bg-purple-500/30 text-purple-200 px-2 py-1 rounded"
                       >
-                        {skill.icon || '✨'} {skill.name}
+                        <span className="font-mono text-xs">{skill.icon || 'SKILL'}</span> {skill.name}
                       </span>
                     ))}
                   </div>
@@ -168,7 +168,7 @@ export function SkillsPanel({ isOpen, onClose }: SkillsPanelProps) {
                             expandedSkill === skill.id ? null : skill.id
                           )}
                         >
-                          <span className="text-xl">{skill.icon || '✨'}</span>
+                          <span className="font-mono text-xs">{skill.icon || 'SKILL'}</span>
                           <div className="flex-1 min-w-0">
                             <div className="font-medium text-sm">{skill.name}</div>
                             <div className="text-xs text-slate-400 truncate">

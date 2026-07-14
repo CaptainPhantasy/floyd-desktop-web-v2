@@ -32,7 +32,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['review', 'code review', 'check my code'],
     enabled: true,
     category: 'coding',
-    icon: '🔍',
+    icon: 'SEARCH',
   },
   {
     id: 'refactor',
@@ -48,7 +48,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['refactor', 'clean up', 'improve code'],
     enabled: true,
     category: 'coding',
-    icon: '🔧',
+    icon: 'FIX',
   },
   {
     id: 'debugging',
@@ -64,7 +64,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['debug', 'fix bug', 'error', 'not working'],
     enabled: true,
     category: 'coding',
-    icon: '🐛',
+    icon: 'DEBUG',
   },
   {
     id: 'documentation',
@@ -80,7 +80,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['document', 'write docs', 'readme'],
     enabled: true,
     category: 'writing',
-    icon: '📝',
+    icon: 'DOC',
   },
   {
     id: 'testing',
@@ -96,7 +96,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['test', 'write tests', 'unit test'],
     enabled: true,
     category: 'coding',
-    icon: '🧪',
+    icon: 'TEST',
   },
   {
     id: 'security-audit',
@@ -112,7 +112,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['security', 'audit', 'vulnerabilities'],
     enabled: true,
     category: 'analysis',
-    icon: '🔒',
+    icon: 'SECURE',
   },
   {
     id: 'performance',
@@ -128,7 +128,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['performance', 'optimize', 'slow', 'speed up'],
     enabled: true,
     category: 'analysis',
-    icon: '⚡',
+    icon: 'PERF',
   },
   {
     id: 'explain',
@@ -144,7 +144,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['explain', 'what does this do', 'how does this work'],
     enabled: true,
     category: 'analysis',
-    icon: '💡',
+    icon: 'IDEA',
   },
   {
     id: 'doc-parity',
@@ -159,7 +159,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['validate docs', 'check documentation', 'doc parity', 'documentation drift'],
     enabled: true,
     category: 'coding',
-    icon: '📊',
+    icon: 'DATA',
   },
   {
     id: 'ssot-validation',
@@ -173,7 +173,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['ssot', 'architecture docs', 'truth sources'],
     enabled: true,
     category: 'analysis',
-    icon: '🎯',
+    icon: 'TARGET',
   },
   {
     id: 'explorer-superpowers',
@@ -187,7 +187,7 @@ const DEFAULT_SKILLS: Skill[] = [
     triggers: ['spatial awareness', 'codebase map', 'mental map', 'surgical edit'],
     enabled: true,
     category: 'automation',
-    icon: '🚀',
+    icon: 'SHIP',
   },
   {
     id: 'supercache',
@@ -201,21 +201,21 @@ Always check 'cache_search' before repeating complex analysis.`,
     triggers: ['cache', 'remember this', 'persist reasoning', 'save to vault'],
     enabled: true,
     category: 'automation',
-    icon: '⚡',
+    icon: 'LEARN',
   },
   {
     id: 'singularity-mode',
     name: 'Singularity Mode (Self-Learning)',
     description: 'Tier 4 protocols for active learning, truth seeking, and ghost testing',
     instructions: `STANDARD OPERATIONS PROTOCOL (SINGULARITY MODE):
-1. 🧠 ACTIVE LEARNING: When you solve a hard problem, use 'skill_crystallizer' to save the pattern. Check patterns before starting new tasks.
-2. 👁️ GHOST TESTING: Use 'tui_puppeteer' to simulate user interactions and 'visual_verify' for snapshots.
-3. 🔬 TRUTH SEEKING: Don't guess APIs. Use 'runtime_schema_gen' to generate TypeScript interfaces from live data.
-4. 🧭 BRAIN SURGERY: Use 'ast_navigator' for precise definition/reference finding.`,
+1. ACTIVE LEARNING: When you solve a hard problem, use 'skill_crystallizer' to save the pattern. Check patterns before starting new tasks.
+2. GHOST TESTING: Use 'tui_puppeteer' to simulate user interactions and 'visual_verify' for snapshots.
+3. TRUTH SEEKING: Don't guess APIs. Use 'runtime_schema_gen' to generate TypeScript interfaces from live data.
+4. BRAIN SURGERY: Use 'ast_navigator' for precise definition/reference finding.`,
     triggers: ['singularity', 'learn this', 'crystallize', 'schema gen'],
     enabled: true,
     category: 'automation',
-    icon: '🔮',
+    icon: 'ORACLE',
   },
 ];
 

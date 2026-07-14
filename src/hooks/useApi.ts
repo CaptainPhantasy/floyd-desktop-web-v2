@@ -29,7 +29,7 @@ export function useApi() {
 
   // Health check
   const checkHealth = useCallback(async () => {
-    return fetchJson<{ status: string; hasApiKey: boolean; model: string }>('/health');
+    return fetchJson<{ status: string; hasApiKey: boolean; model: string }>('/core/health');
   }, [fetchJson]);
 
   // Settings
@@ -111,7 +111,7 @@ export function useApi() {
     setError(null);
     
     try {
-      const response = await fetch(`${API_BASE}/chat/stream`, {
+      const response = await fetch(`${API_BASE}/core/chat/stream`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, message, enableTools: true }),
