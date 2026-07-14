@@ -6,7 +6,6 @@
  */
 
 import express from 'express';
-import cors from 'cors';
 import Anthropic from '@anthropic-ai/sdk';
 import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
@@ -44,7 +43,6 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 const app = express();
-app.use(cors());
 app.use(express.json());
 
 // Serve static frontend files from dist/
@@ -1541,13 +1539,14 @@ app.get('*', (req, res) => {
 
 // Start server
 const PORT = process.env.PORT || 3001;
+const HOST = process.env.HOST || '127.0.0.1';
 const MCP_WS_PORT = Number(process.env.MCP_WS_PORT || 3005);
 
 // Also start WebSocket MCP server for Chrome extension
 initDataDir().then(async () => {
   // Start Express API server
-  app.listen(PORT, () => {
-    console.log(`[Floyd Web Server] Running on http://localhost:${PORT}`);
+  app.listen(Number(PORT), HOST, () => {
+    console.log(`[Floyd Web Server] Running on http://${HOST}:${PORT}`);
     console.log(`[Floyd Web Server] API Key: ${settings.apiKey ? 'Configured' : 'NOT SET'}`);
   });
 

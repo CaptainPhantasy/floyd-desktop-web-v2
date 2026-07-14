@@ -49,6 +49,8 @@ FLOYD_GATEWAY_TOKEN_FILE=/Volumes/Storage/FLOYD_RUNTIME/core/gateway.token
 # Required when Core has more than one registered project and Desktop has no
 # active project with an exact rootPath match.
 FLOYD_PROJECT_ID=project_id_from_floyd_core
+# Defaults to loopback. Set another address only on an explicitly trusted host.
+HOST=127.0.0.1
 # Optional Chrome extension bridge port. A bind failure does not stop Desktop.
 MCP_WS_PORT=3005
 ```
