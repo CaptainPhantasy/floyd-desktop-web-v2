@@ -5,6 +5,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ApiError, useApi } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
+import { draftPublicationIsStale, reconcileDraft, watchExperienceWithReconnect } from '@/lib/experience-sync';
 import type { ExperienceEnvelope, Session, Message } from '@/types';
 import { SettingsModal } from '@/components/SettingsModal';
 import { Sidebar } from '@/components/Sidebar';
@@ -41,6 +42,7 @@ export default function App() {
   const [showSkills, setShowSkills] = useState(false);
   const [showProjects, setShowProjects] = useState(false);
   const [showBrowork, setShowBrowork] = useState(false);
+  const [draftDivergence, setDraftDivergence] = useState<{ local: string; remote: string } | null>(null);
   const [activeToolCalls, setActiveToolCalls] = useState<Array<{
     id: string;
     tool: string;
@@ -59,6 +61,8 @@ export default function App() {
   const restoringRef = useRef(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const publishQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const localDraftRef = useRef('');
+  const lastSyncedDraftRef = useRef('');
 
   useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
 
@@ -77,19 +81,42 @@ export default function App() {
   };
 
   const publishExperience = (change: Record<string, unknown>): Promise<void> => {
+    const queuedRevision = envelopeRef.current?.revision;
     const publish = async () => {
       const base = envelopeRef.current;
       if (!base || restoringRef.current) return;
+      const requestedDraft = typeof change.composer_draft === 'string' ? change.composer_draft : undefined;
+      if (requestedDraft !== undefined && draftPublicationIsStale(queuedRevision, base.revision)) {
+        lastSyncedDraftRef.current = base.composer_draft || '';
+        if (localDraftRef.current !== base.composer_draft) {
+          setDraftDivergence({ local: localDraftRef.current, remote: base.composer_draft || '' });
+          setStatusMessage('Draft changed before publication. Your local text was preserved and was not published over it.');
+        }
+        return;
+      }
       try {
-        envelopeRef.current = await api.updateExperience(base.id, {
+        const updated = await api.updateExperience(base.id, {
           expected_revision: base.revision,
           ...change,
           surface: surfaceState(base),
         });
+        envelopeRef.current = updated;
+        if (requestedDraft !== undefined && localDraftRef.current === requestedDraft) {
+          lastSyncedDraftRef.current = updated.composer_draft || '';
+          setDraftDivergence(null);
+        }
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
-          envelopeRef.current = await api.getExperience(base.id);
-          setStatusMessage('Experience changed on another surface. Latest Core state kept; review before publishing again.');
+          const latest = await api.getExperience(base.id);
+          envelopeRef.current = latest;
+          lastSyncedDraftRef.current = latest.composer_draft || '';
+          if (requestedDraft !== undefined && localDraftRef.current !== latest.composer_draft) {
+            cancelPendingDraft();
+            setDraftDivergence({ local: localDraftRef.current, remote: latest.composer_draft || '' });
+            setStatusMessage('Draft changed on another surface. Your local text was preserved and was not published over it.');
+          } else {
+            setStatusMessage('Experience changed on another surface. Latest Core state kept; review before publishing again.');
+          }
           return;
         }
         setStatusMessage(`Experience error: ${error instanceof Error ? error.message : String(error)}`);
@@ -107,7 +134,18 @@ export default function App() {
     restoringRef.current = true;
     const generation = ++restoreGenerationRef.current;
     try {
-      if (document.activeElement !== inputRef.current) setInput(envelope.composer_draft || '');
+      const remoteDraft = envelope.composer_draft || '';
+      const draft = reconcileDraft(localDraftRef.current, lastSyncedDraftRef.current, remoteDraft);
+      lastSyncedDraftRef.current = remoteDraft;
+      if (draft.mode === 'diverged') {
+        cancelPendingDraft();
+        setDraftDivergence({ local: draft.local, remote: draft.remote });
+        setStatusMessage('Draft changed on another surface. Your local text was preserved and was not published over it.');
+      } else {
+        localDraftRef.current = draft.value;
+        setInput(draft.value);
+        setDraftDivergence(null);
+      }
       const { run_id: runId, session_id: coreSessionId, project_id: projectId } = envelope.active;
       if (!runId || !coreSessionId) return;
       if (!force && priorRun === runId && currentSessionRef.current?.floydRunId === runId) return;
@@ -168,11 +206,17 @@ export default function App() {
         setStatusMessage(err.message || 'Failed to connect to server');
       }
     }
-    void init().then(() => api.watchExperience(
-      (envelope) => applyEnvelope(envelope),
-      watchAbort.signal,
-      String(envelopeRef.current?.revision ?? 0),
-    )).catch((error) => {
+    void init().then(() => watchExperienceWithReconnect({
+      watch: api.watchExperience,
+      restore: () => api.getExperience(),
+      apply: applyEnvelope,
+      lastEventId: () => String(envelopeRef.current?.revision ?? 0),
+      signal: watchAbort.signal,
+      onRetry: (attempt, error) => setStatusMessage(
+        `Experience stream reconnect ${attempt}/5: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+      maxConsecutiveFailures: 5,
+    })).catch((error) => {
       if (!watchAbort.signal.aborted) setStatusMessage(`Experience stream error: ${error instanceof Error ? error.message : String(error)}`);
     });
     return () => {
@@ -194,6 +238,8 @@ export default function App() {
     
     setMessages(prev => [...prev, userMessage]);
     setInput('');
+    localDraftRef.current = '';
+    setDraftDivergence(null);
     setIsStreaming(true);
     setStreamingContent('');
     streamingContentRef.current = '';
@@ -209,7 +255,7 @@ export default function App() {
           setStreamingContent(streamingContentRef.current);
         },
         // onDone
-        async (usage, sessionId, binding) => {
+        async (_usage, _sessionId, binding) => {
           const fullContent = streamingContentRef.current;
           if (fullContent) {
             setMessages(prev => [...prev, {
@@ -227,15 +273,7 @@ export default function App() {
           const sessionList = await api.getSessions();
           setSessions(sessionList);
           if (binding?.floydRunId && binding.floydSessionId) {
-            await publishExperience({
-              active: {
-                project_id: binding.floydProjectId ?? null,
-                session_id: binding.floydSessionId,
-                run_id: binding.floydRunId,
-              },
-              selected_view: 'desktop-chat',
-              composer_draft: '',
-            });
+            await applyEnvelope(await api.getExperience(), true);
           }
         },
         // onError
@@ -256,7 +294,7 @@ export default function App() {
           }]);
         },
         // onToolResult
-        (tool, id, result, success) => {
+        (_tool, id, result, success) => {
           setActiveToolCalls(prev => prev.map(tc => 
             tc.id === id 
               ? { ...tc, result, success, isExecuting: false }
@@ -350,6 +388,22 @@ export default function App() {
       setStatus('ready');
       setStatusMessage(`Connected to ${health.model}`);
     }
+  };
+
+  const useRemoteDraft = () => {
+    if (!draftDivergence) return;
+    cancelPendingDraft();
+    localDraftRef.current = draftDivergence.remote;
+    lastSyncedDraftRef.current = draftDivergence.remote;
+    setInput(draftDivergence.remote);
+    setDraftDivergence(null);
+  };
+
+  const keepLocalDraft = async () => {
+    if (!draftDivergence) return;
+    const local = draftDivergence.local;
+    setDraftDivergence(null);
+    await publishExperience({ composer_draft: local });
   };
 
   return (
@@ -564,6 +618,15 @@ export default function App() {
 
         {/* Input */}
         <div className="border-t border-slate-700 p-4">
+          {draftDivergence && (
+            <div role="alert" className="mb-3 rounded-lg border border-amber-500/50 bg-amber-950/40 p-3 text-sm text-amber-100">
+              <div>Draft changed on another surface. Your local text is preserved.</div>
+              <div className="mt-2 flex gap-2">
+                <button type="button" onClick={keepLocalDraft} className="rounded bg-amber-600 px-3 py-1 hover:bg-amber-500">Keep local</button>
+                <button type="button" onClick={useRemoteDraft} className="rounded border border-amber-500/60 px-3 py-1 hover:bg-amber-900/60">Use remote</button>
+              </div>
+            </div>
+          )}
           <div className="flex gap-2">
             <textarea
               ref={inputRef}
@@ -571,6 +634,8 @@ export default function App() {
               onChange={(e) => {
                 const value = e.target.value;
                 setInput(value);
+                localDraftRef.current = value;
+                setDraftDivergence((current) => current ? { ...current, local: value } : null);
                 cancelPendingDraft();
                 draftTimerRef.current = setTimeout(() => void publishExperience({ composer_draft: value }), 350);
               }}

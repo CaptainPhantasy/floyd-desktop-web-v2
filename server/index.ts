@@ -21,6 +21,7 @@ import { BroworkManager, AgentTask, Provider as BroworkProvider } from './browor
 import { WebSocketMCPServer } from './ws-mcp-server.js';
 import { FloydApiError, FloydCoreBridge } from './floyd-core.js';
 import { registerExperienceRoutes } from './experience-adapter.js';
+import { publishCreatedRunContext } from './experience-publication.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -1241,6 +1242,7 @@ app.post('/api/core/chat/stream', async (req, res) => {
   res.once('close', cancel);
 
   try {
+    let createdNewRun = false;
     if (session.floydSessionId) {
       await floydCore.client.steer(session.floydSessionId, message.trim(), 'floyd-desktop', abort.signal);
     } else {
@@ -1250,11 +1252,20 @@ app.post('/api/core/chat/stream', async (req, res) => {
       session.floydRunId = created.run_id;
       session.floydSessionId = String(run.session_id);
       session.floydProjectId = projectId;
+      createdNewRun = true;
     }
 
     session.messages.push({ role: 'user', content: message.trim(), timestamp: Date.now() });
     session.updated = Date.now();
     await saveSession(session);
+
+    if (createdNewRun) {
+      await publishCreatedRunContext(floydCore.client, {
+        projectId: session.floydProjectId!,
+        sessionId: session.floydSessionId!,
+        runId: session.floydRunId!,
+      }, abort.signal);
+    }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');

@@ -21,7 +21,7 @@ async function responsePayload(response: Response): Promise<unknown> {
   try { return JSON.parse(text); } catch { return text; }
 }
 
-async function* sse(response: Response): AsyncGenerator<{ id?: string; type: string; data: any }> {
+export async function* parseSse(response: Response): AsyncGenerator<{ id?: string; type: string; data: any }> {
   if (!response.ok) throw new ApiError(response.status, await responsePayload(response));
   if (!response.body) throw new Error('No response body');
   const reader = response.body.getReader();
@@ -31,14 +31,16 @@ async function* sse(response: Response): AsyncGenerator<{ id?: string; type: str
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
-      buffer += decoder.decode(value, { stream: true }).replace(/\r\n?/g, '\n');
-      const frames = buffer.split('\n\n');
-      buffer = frames.pop() ?? '';
-      for (const frame of frames) {
+      buffer += decoder.decode(value, { stream: true });
+      for (;;) {
+        const boundary = /\r\n\r\n|\n\n|\r\r/.exec(buffer);
+        if (!boundary || boundary.index === undefined) break;
+        const frame = buffer.slice(0, boundary.index);
+        buffer = buffer.slice(boundary.index + boundary[0].length);
         let id: string | undefined;
         let type = 'message';
         const lines: string[] = [];
-        for (const line of frame.split('\n')) {
+        for (const line of frame.split(/\r\n|\n|\r/)) {
           if (line.startsWith('id:')) id = line.slice(3).trim();
           else if (line.startsWith('event:')) type = line.slice(6).trim();
           else if (line.startsWith('data:')) lines.push(line.slice(5).trimStart());
@@ -190,42 +192,23 @@ export function useApi() {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
       
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response body');
-      
-      const decoder = new TextDecoder();
-      
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        
-        const chunk = decoder.decode(value);
-        const lines = chunk.split('\n');
-        
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
-            try {
-              const data = JSON.parse(line.slice(6));
-              
-              if (data.type === 'text') {
-                onText(data.content);
-              } else if (data.type === 'tool_call') {
-                onToolCall?.(data.tool, data.args, data.id);
-              } else if (data.type === 'tool_result') {
-                onToolResult?.(data.tool, data.id, data.result, data.success);
-              } else if (data.type === 'done') {
-                onDone(data.usage, data.sessionId, {
-                  floydRunId: data.runId,
-                  floydSessionId: data.coreSessionId,
-                  floydProjectId: data.projectId,
-                });
-              } else if (data.type === 'error') {
-                onError(data.error);
-              }
-            } catch {
-              // Ignore parse errors
-            }
-          }
+      for await (const event of parseSse(response)) {
+        const data = event.data;
+        if (!data || typeof data !== 'object') continue;
+        if (data.type === 'text') {
+          onText(data.content);
+        } else if (data.type === 'tool_call') {
+          onToolCall?.(data.tool, data.args, data.id);
+        } else if (data.type === 'tool_result') {
+          onToolResult?.(data.tool, data.id, data.result, data.success);
+        } else if (data.type === 'done') {
+          onDone(data.usage, data.sessionId, {
+            floydRunId: data.runId,
+            floydSessionId: data.coreSessionId,
+            floydProjectId: data.projectId,
+          });
+        } else if (data.type === 'error') {
+          onError(data.error);
         }
       }
     } catch (err: any) {
@@ -270,14 +253,14 @@ export function useApi() {
       headers: lastEventId ? { 'Last-Event-ID': lastEventId } : {},
       signal,
     });
-    for await (const event of sse(response)) {
+    for await (const event of parseSse(response)) {
       if (event.type === 'experience') await onEnvelope(event.data as ExperienceEnvelope);
     }
   }, []);
 
   const restoreTranscript = useCallback(async (sessionId: string, runId: string, signal?: AbortSignal): Promise<Message[]> => {
     const response = await fetch(`${API_BASE}/core/sessions/${encodeURIComponent(sessionId)}/attach?run_id=${encodeURIComponent(runId)}`, { signal });
-    for await (const event of sse(response)) {
+    for await (const event of parseSse(response)) {
       if (event.type === 'transcript') return transcriptMessages(event.data?.messages);
     }
     return [];
