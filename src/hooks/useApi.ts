@@ -58,6 +58,36 @@ export async function* parseSse(response: Response): AsyncGenerator<{ id?: strin
   }
 }
 
+interface CodingStreamCallbacks {
+  onText: (text: string) => void;
+  onDone: (usage: any, sessionId: string, binding: Pick<Session, 'floydRunId' | 'floydSessionId' | 'floydProjectId'>) => void | Promise<void>;
+  onToolCall?: (tool: string, args: any, id: string) => void;
+  onToolResult?: (tool: string, id: string, result: any, success: boolean) => void;
+}
+
+/** Consume only semantically complete coding streams; transport EOF is an error. */
+export async function consumeCodingStream(response: Response, callbacks: CodingStreamCallbacks): Promise<void> {
+  let completed = false;
+  for await (const event of parseSse(response)) {
+    const data = event.data;
+    if (!data || typeof data !== 'object') continue;
+    if (data.type === 'text') callbacks.onText(String(data.content ?? ''));
+    else if (data.type === 'tool_call') callbacks.onToolCall?.(data.tool, data.args, data.id);
+    else if (data.type === 'tool_result') callbacks.onToolResult?.(data.tool, data.id, data.result, data.success);
+    else if (data.type === 'error') throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
+    else if (data.type === 'done') {
+      completed = true;
+      await callbacks.onDone(data.usage, data.sessionId, {
+        floydRunId: data.runId,
+        floydSessionId: data.coreSessionId,
+        floydProjectId: data.projectId,
+      });
+      break;
+    }
+  }
+  if (!completed) throw new Error('Coding stream ended before Floyd Core reported completion');
+}
+
 function transcriptText(value: any): string {
   if (typeof value === 'string') return value;
   if (Array.isArray(value)) return value.map(transcriptText).filter(Boolean).join('\n');
@@ -172,10 +202,11 @@ export function useApi() {
     sessionId: string, 
     message: string,
     onText: (text: string) => void,
-    onDone: (usage: any, sessionId: string, binding?: Pick<Session, 'floydRunId' | 'floydSessionId' | 'floydProjectId'>) => void,
+    onDone: (usage: any, sessionId: string, binding?: Pick<Session, 'floydRunId' | 'floydSessionId' | 'floydProjectId'>) => void | Promise<void>,
     onError: (error: string) => void,
     onToolCall?: (tool: string, args: any, id: string) => void,
-    onToolResult?: (tool: string, id: string, result: any, success: boolean) => void
+    onToolResult?: (tool: string, id: string, result: any, success: boolean) => void,
+    signal?: AbortSignal,
   ) => {
     setLoading(true);
     setError(null);
@@ -185,6 +216,7 @@ export function useApi() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ sessionId, message, enableTools: true }),
+        signal,
       });
       
       if (!response.ok) {
@@ -192,26 +224,9 @@ export function useApi() {
         throw new Error(data.error || `HTTP ${response.status}`);
       }
       
-      for await (const event of parseSse(response)) {
-        const data = event.data;
-        if (!data || typeof data !== 'object') continue;
-        if (data.type === 'text') {
-          onText(data.content);
-        } else if (data.type === 'tool_call') {
-          onToolCall?.(data.tool, data.args, data.id);
-        } else if (data.type === 'tool_result') {
-          onToolResult?.(data.tool, data.id, data.result, data.success);
-        } else if (data.type === 'done') {
-          onDone(data.usage, data.sessionId, {
-            floydRunId: data.runId,
-            floydSessionId: data.coreSessionId,
-            floydProjectId: data.projectId,
-          });
-        } else if (data.type === 'error') {
-          onError(data.error);
-        }
-      }
+      await consumeCodingStream(response, { onText, onDone, onToolCall, onToolResult });
     } catch (err: any) {
+      if (signal?.aborted || err?.name === 'AbortError') return;
       setError(err.message);
       onError(err.message);
     } finally {

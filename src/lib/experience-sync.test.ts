@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { ExperienceEnvelope } from '@/types';
-import { draftPublicationIsStale, reconcileDraft, watchExperienceWithReconnect } from './experience-sync';
+import { draftDivergenceAfterPublication, draftPublicationConfirmed, draftPublicationIsStale, reconcileDraft, watchExperienceWithReconnect } from './experience-sync';
 
 function envelope(revision: number, draft: string): ExperienceEnvelope {
   return {
@@ -23,6 +23,15 @@ describe('experience synchronization', () => {
     });
     expect(draftPublicationIsStale(7, 8)).toBe(true);
     expect(draftPublicationIsStale(8, 8)).toBe(false);
+    expect(draftPublicationConfirmed('local work', 'remote work')).toBe(false);
+    expect(draftPublicationConfirmed('local work', 'local work')).toBe(true);
+  });
+
+  it('keeps local divergence visible until the exact draft publication succeeds', () => {
+    const divergence = { local: 'local work', remote: 'remote work' };
+    expect(draftDivergenceAfterPublication(divergence, 'local work', false)).toBe(divergence);
+    expect(draftDivergenceAfterPublication(divergence, 'older local', true)).toBe(divergence);
+    expect(draftDivergenceAfterPublication(divergence, 'local work', true)).toBeNull();
   });
 
   it('restores fresh state before reconnecting and bounds consecutive failures', async () => {

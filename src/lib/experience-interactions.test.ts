@@ -4,7 +4,10 @@ import { modelRouteLabel, normalizePendingPermissions, normalizePendingQuestions
 describe('portable interaction normalization', () => {
   it('normalizes attributed Core question and permission snapshots', () => {
     expect(normalizePendingQuestions([{ run_id: 'r1', data: { id: 'q1', questions: [{ question: 'Choose', options: [{ label: 'A' }, { label: 'B' }] }] } }])).toEqual([
-      { requestId: 'q1', prompts: [{ text: 'Choose', options: ['A', 'B'] }] },
+      { requestId: 'q1', prompts: [{ text: 'Choose', options: ['A', 'B'], multiple: false }] },
+    ]);
+    expect(normalizePendingQuestions([{ data: { id: 'q2', questions: [{ question: 'Choose many', options: ['A', 'B'], multiple: true }] } }])).toEqual([
+      { requestId: 'q2', prompts: [{ text: 'Choose many', options: ['A', 'B'], multiple: true }] },
     ]);
     expect(normalizePendingPermissions([{ data: { id: 'p1', permission: 'shell', patterns: ['npm test'] } }])).toEqual([
       { requestId: 'p1', title: 'shell', detail: 'npm test' },

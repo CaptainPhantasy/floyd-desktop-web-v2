@@ -5,6 +5,11 @@ export type DraftReconciliation =
   | { mode: 'synced'; value: string }
   | { mode: 'diverged'; local: string; remote: string };
 
+export interface DraftDivergence {
+  local: string;
+  remote: string;
+}
+
 /** Preserve locally edited text whenever Core advances to a different draft. */
 export function reconcileDraft(local: string, lastSynced: string, remote: string): DraftReconciliation {
   if (local === remote) return { mode: 'synced', value: remote };
@@ -14,6 +19,20 @@ export function reconcileDraft(local: string, lastSynced: string, remote: string
 
 export function draftPublicationIsStale(queuedRevision: number | undefined, currentRevision: number): boolean {
   return queuedRevision !== undefined && queuedRevision !== currentRevision;
+}
+
+export function draftPublicationConfirmed(requestedDraft: string | undefined, publishedDraft: string): boolean {
+  return requestedDraft === undefined || publishedDraft === requestedDraft;
+}
+
+/** Keep the resolution visible unless the exact local draft was published. */
+export function draftDivergenceAfterPublication(
+  current: DraftDivergence | null,
+  attemptedLocal: string,
+  published: boolean,
+): DraftDivergence | null {
+  if (!published || current?.local !== attemptedLocal) return current;
+  return null;
 }
 
 interface WatchLoopOptions {

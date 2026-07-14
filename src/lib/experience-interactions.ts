@@ -1,6 +1,7 @@
 export interface QuestionPrompt {
   text: string;
   options: string[];
+  multiple: boolean;
 }
 
 export interface PendingQuestion {
@@ -48,6 +49,7 @@ export function normalizePendingQuestions(items: unknown[]): PendingQuestion[] {
       return {
         text: text(question.question ?? question.prompt ?? question.text ?? question.header) || `Question ${index + 1}`,
         options,
+        multiple: question.multiple === true || question.allow_multiple === true || question.type === 'multiple',
       };
     });
     return [{ requestId: id, prompts }];

@@ -5,7 +5,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { ApiError, useApi } from '@/hooks/useApi';
 import { cn } from '@/lib/utils';
-import { draftPublicationIsStale, reconcileDraft, watchExperienceWithReconnect } from '@/lib/experience-sync';
+import { draftDivergenceAfterPublication, draftPublicationConfirmed, draftPublicationIsStale, reconcileDraft, watchExperienceWithReconnect } from '@/lib/experience-sync';
 import type { ExperienceEnvelope, Session, Message } from '@/types';
 import { SettingsModal } from '@/components/SettingsModal';
 import { ExperiencePanels } from '@/components/ExperiencePanels';
@@ -76,10 +76,12 @@ export default function App() {
   const restoreGenerationRef = useRef(0);
   const restoringRef = useRef(false);
   const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const publishQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const publishQueueRef = useRef<Promise<unknown>>(Promise.resolve());
   const localDraftRef = useRef('');
   const lastSyncedDraftRef = useRef('');
   const actionAbortRef = useRef<AbortController | null>(null);
+  const codingStreamAbortRef = useRef<AbortController | null>(null);
+  const codingStreamGenerationRef = useRef(0);
 
   useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
 
@@ -97,11 +99,11 @@ export default function App() {
     draftTimerRef.current = null;
   };
 
-  const publishExperience = (change: Record<string, unknown>): Promise<void> => {
+  const publishExperience = (change: Record<string, unknown>): Promise<boolean> => {
     const queuedRevision = envelopeRef.current?.revision;
     const publish = async () => {
       const base = envelopeRef.current;
-      if (!base || restoringRef.current) return;
+      if (!base || restoringRef.current) return false;
       const requestedDraft = typeof change.composer_draft === 'string' ? change.composer_draft : undefined;
       if (requestedDraft !== undefined && draftPublicationIsStale(queuedRevision, base.revision)) {
         lastSyncedDraftRef.current = base.composer_draft || '';
@@ -109,7 +111,7 @@ export default function App() {
           setDraftDivergence({ local: localDraftRef.current, remote: base.composer_draft || '' });
           setStatusMessage('Draft changed before publication. Your local text was preserved and was not published over it.');
         }
-        return;
+        return false;
       }
       try {
         const updated = await api.updateExperience(base.id, {
@@ -118,10 +120,16 @@ export default function App() {
           surface: surfaceState(base),
         });
         envelopeRef.current = updated;
-        if (requestedDraft !== undefined && localDraftRef.current === requestedDraft) {
+        const draftConfirmed = draftPublicationConfirmed(requestedDraft, updated.composer_draft || '');
+        if (requestedDraft !== undefined && localDraftRef.current === requestedDraft && draftConfirmed) {
           lastSyncedDraftRef.current = updated.composer_draft || '';
           setDraftDivergence(null);
+        } else if (requestedDraft !== undefined && localDraftRef.current === requestedDraft) {
+          lastSyncedDraftRef.current = updated.composer_draft || '';
+          setDraftDivergence({ local: requestedDraft, remote: updated.composer_draft || '' });
+          setStatusMessage('Core did not confirm the local draft. Your local text remains preserved.');
         }
+        return draftConfirmed;
       } catch (error) {
         if (error instanceof ApiError && error.status === 409) {
           const latest = await api.getExperience(base.id);
@@ -134,14 +142,25 @@ export default function App() {
           } else {
             setStatusMessage('Experience changed on another surface. Latest Core state kept; review before publishing again.');
           }
-          return;
+          return false;
         }
         setStatusMessage(`Experience error: ${error instanceof Error ? error.message : String(error)}`);
+        return false;
       }
     };
     const queued = publishQueueRef.current.then(publish, publish);
     publishQueueRef.current = queued.catch(() => {});
     return queued;
+  };
+
+  const cancelCodingStream = () => {
+    codingStreamGenerationRef.current += 1;
+    codingStreamAbortRef.current?.abort();
+    codingStreamAbortRef.current = null;
+    setIsStreaming(false);
+    setStreamingContent('');
+    streamingContentRef.current = '';
+    setActiveToolCalls([]);
   };
 
   const applyEnvelope = async (envelope: ExperienceEnvelope, force = false) => {
@@ -188,6 +207,7 @@ export default function App() {
       const transcript = await api.restoreTranscript(coreSessionId, runId);
       if (generation !== restoreGenerationRef.current) return;
       const restored = { ...session, messages: transcript.length ? transcript : session.messages };
+      if (codingStreamAbortRef.current && currentSessionRef.current?.id !== restored.id) cancelCodingStream();
       setSessions(listed.some((item) => item.id === restored.id) ? listed : [restored, ...listed]);
       setCurrentSession(restored);
       setMessages(restored.messages);
@@ -270,6 +290,7 @@ export default function App() {
     });
     return () => {
       watchAbort.abort();
+      codingStreamAbortRef.current?.abort();
       if (draftTimerRef.current) clearTimeout(draftTimerRef.current);
     };
   }, []);
@@ -293,6 +314,11 @@ export default function App() {
     setStreamingContent('');
     streamingContentRef.current = '';
     setActiveToolCalls([]);
+    codingStreamAbortRef.current?.abort();
+    const controller = new AbortController();
+    codingStreamAbortRef.current = controller;
+    const generation = ++codingStreamGenerationRef.current;
+    const isCurrent = () => generation === codingStreamGenerationRef.current && !controller.signal.aborted;
     
     try {
       await api.sendMessageStream(
@@ -300,11 +326,13 @@ export default function App() {
         userMessage.content,
         // onText
         (text) => {
+          if (!isCurrent()) return;
           streamingContentRef.current += text;
           setStreamingContent(streamingContentRef.current);
         },
         // onDone
         async (_usage, _sessionId, binding) => {
+          if (!isCurrent()) return;
           const fullContent = streamingContentRef.current;
           if (fullContent) {
             setMessages(prev => [...prev, {
@@ -320,13 +348,16 @@ export default function App() {
           
           // Refresh sessions list
           const sessionList = await api.getSessions();
+          if (!isCurrent()) return;
           setSessions(sessionList);
           if (binding?.floydRunId && binding.floydSessionId) {
             await applyEnvelope(await api.getExperience(), true);
           }
+          if (isCurrent()) codingStreamAbortRef.current = null;
         },
         // onError
         (error) => {
+          if (!isCurrent()) return;
           setStatusMessage(`Error: ${error}`);
           setIsStreaming(false);
           setStreamingContent('');
@@ -335,6 +366,7 @@ export default function App() {
         },
         // onToolCall
         (tool, args, id) => {
+          if (!isCurrent()) return;
           setActiveToolCalls(prev => [...prev, {
             id,
             tool,
@@ -344,12 +376,14 @@ export default function App() {
         },
         // onToolResult
         (_tool, id, result, success) => {
+          if (!isCurrent()) return;
           setActiveToolCalls(prev => prev.map(tc => 
             tc.id === id 
               ? { ...tc, result, success, isExecuting: false }
               : tc
           ));
-        }
+        },
+        controller.signal,
       );
     } catch (err: any) {
       setStatusMessage(`Error: ${err.message}`);
@@ -368,6 +402,7 @@ export default function App() {
   // Handle new session
   const handleNewSession = async () => {
     try {
+      cancelCodingStream();
       cancelPendingDraft();
       const session = await api.createSession();
       setSessions(prev => [session, ...prev]);
@@ -387,6 +422,7 @@ export default function App() {
   // Handle select session
   const handleSelectSession = async (sessionId: string) => {
     try {
+      cancelCodingStream();
       cancelPendingDraft();
       const session = await api.getSession(sessionId);
       setCurrentSession(session);
@@ -409,6 +445,7 @@ export default function App() {
   // Handle delete session
   const handleDeleteSession = async (sessionId: string) => {
     try {
+      if (currentSession?.id === sessionId) cancelCodingStream();
       await api.deleteSession(sessionId);
       setSessions(prev => prev.filter(s => s.id !== sessionId));
       
@@ -451,8 +488,8 @@ export default function App() {
   const keepLocalDraft = async () => {
     if (!draftDivergence) return;
     const local = draftDivergence.local;
-    setDraftDivergence(null);
-    await publishExperience({ composer_draft: local });
+    const published = await publishExperience({ composer_draft: local });
+    setDraftDivergence((current) => draftDivergenceAfterPublication(current, local, published));
   };
 
   const answerPendingQuestion = async (requestId: string, answers: string[][]) => {

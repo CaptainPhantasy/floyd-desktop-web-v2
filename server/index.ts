@@ -22,6 +22,7 @@ import { WebSocketMCPServer } from './ws-mcp-server.js';
 import { FloydApiError, FloydCoreBridge } from './floyd-core.js';
 import { registerExperienceRoutes } from './experience-adapter.js';
 import { publishCreatedRunContext } from './experience-publication.js';
+import { attachRunWithReconnect } from './core-stream.js';
 import { registerCoreActionRoutes } from './core-actions.js';
 
 // Load .env.local
@@ -1246,6 +1247,14 @@ app.post('/api/core/chat/stream', async (req, res) => {
   try {
     let createdNewRun = false;
     if (session.floydSessionId) {
+      if (!session.floydRunId) {
+        const restored = await floydCore.client.experience('primary', abort.signal);
+        if (restored.active.session_id !== session.floydSessionId || !restored.active.run_id) {
+          throw new Error('Desktop session has no recoverable Floyd Core run binding');
+        }
+        session.floydRunId = restored.active.run_id;
+        session.floydProjectId ??= restored.active.project_id ?? undefined;
+      }
       await floydCore.client.steer(session.floydSessionId, message.trim(), 'floyd-desktop', abort.signal);
     } else {
       const projectId = await floydCore.resolveProject(projectsManager.getActive()?.rootPath, abort.signal);
@@ -1275,26 +1284,33 @@ app.post('/api/core/chat/stream', async (req, res) => {
     res.flushHeaders();
 
     let fullResponse = '';
-    for await (const event of floydCore.client.attachSession(session.floydSessionId, 'floyd-desktop', { signal: abort.signal })) {
-      if (abort.signal.aborted) break;
-      const envelope = (event.data ?? {}) as Record<string, unknown>;
-      const data = (envelope.data ?? {}) as Record<string, unknown>;
-      if (event.type === 'token' && envelope.channel === 'text') {
-        const content = String(data.delta ?? data.text ?? '');
-        fullResponse += content;
-        res.write(`data: ${JSON.stringify({ type: 'text', content })}\n\n`);
-      } else if (event.type === 'tool_call_start') {
-        res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: data.tool ?? data.name ?? 'tool', args: data.input ?? {}, id: event.id ?? '' })}\n\n`);
-      } else if (event.type === 'tool_call_finish') {
-        res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: data.tool ?? data.name ?? 'tool', result: data.output ?? data, success: true, id: event.id ?? '' })}\n\n`);
-      } else if (event.type === 'error') {
-        res.write(`data: ${JSON.stringify({ type: 'error', error: data.message ?? data.error ?? data, coreEvent: event })}\n\n`);
-      } else if (event.type === 'done') {
-        break;
-      }
-    }
+    let completed = false;
+    await attachRunWithReconnect({
+      client: floydCore.client,
+      binding: { sessionId: session.floydSessionId!, runId: session.floydRunId! },
+      signal: abort.signal,
+      onEvent: async (event) => {
+        if (abort.signal.aborted) return;
+        const envelope = (event.data ?? {}) as Record<string, unknown>;
+        const data = (envelope.data ?? {}) as Record<string, unknown>;
+        if (event.type === 'token' && envelope.channel === 'text') {
+          const content = String(data.delta ?? data.text ?? '');
+          fullResponse += content;
+          res.write(`data: ${JSON.stringify({ type: 'text', content })}\n\n`);
+        } else if (event.type === 'tool_call_start') {
+          res.write(`data: ${JSON.stringify({ type: 'tool_call', tool: data.tool ?? data.name ?? 'tool', args: data.input ?? {}, id: event.id ?? '' })}\n\n`);
+        } else if (event.type === 'tool_call_finish') {
+          res.write(`data: ${JSON.stringify({ type: 'tool_result', tool: data.tool ?? data.name ?? 'tool', result: data.output ?? data, success: true, id: event.id ?? '' })}\n\n`);
+        } else if (event.type === 'error') {
+          const message = data.message ?? data.error ?? data;
+          throw Object.assign(new Error(typeof message === 'string' ? message : JSON.stringify(message)), { coreEvent: event });
+        } else if (event.type === 'done') {
+          completed = true;
+        }
+      },
+    });
 
-    if (!abort.signal.aborted) {
+    if (!abort.signal.aborted && completed) {
       if (fullResponse) session.messages.push({ role: 'assistant', content: fullResponse, timestamp: Date.now() });
       session.updated = Date.now();
       await saveSession(session);
