@@ -3,7 +3,7 @@ import { FloydApiError, FloydCoreBridge } from './floyd-core.js';
 
 const SURFACE_ID = 'desktop';
 const SDK_VERSION = '1.0.0';
-const CAPABILITIES = ['coding-runs', 'drafts', 'experience-stream', 'transcript-restore'];
+const CAPABILITIES = ['artifacts', 'coding-runs', 'drafts', 'experience-stream', 'model-route-display', 'permissions', 'questions', 'selected-view', 'transcript-restore'];
 
 function isLoopback(address?: string): boolean {
   return address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1';

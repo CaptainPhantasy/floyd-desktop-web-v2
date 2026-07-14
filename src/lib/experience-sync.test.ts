@@ -5,6 +5,8 @@ import { draftPublicationIsStale, reconcileDraft, watchExperienceWithReconnect }
 function envelope(revision: number, draft: string): ExperienceEnvelope {
   return {
     id: 'primary', revision, composer_draft: draft,
+    model_route: {},
+    pending_questions: [], pending_permissions: [],
     active: { project_id: null, session_id: null, run_id: null },
     transcript_cursor: 0, transcript_epoch: null, last_event_id: String(revision),
     selected_view: '', selected_artifact_id: null, surfaces: {},

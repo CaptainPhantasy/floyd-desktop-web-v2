@@ -8,12 +8,14 @@ import { cn } from '@/lib/utils';
 import { draftPublicationIsStale, reconcileDraft, watchExperienceWithReconnect } from '@/lib/experience-sync';
 import type { ExperienceEnvelope, Session, Message } from '@/types';
 import { SettingsModal } from '@/components/SettingsModal';
+import { ExperiencePanels } from '@/components/ExperiencePanels';
 import { Sidebar } from '@/components/Sidebar';
 import { ChatMessage } from '@/components/ChatMessage';
 import { ToolCallCard } from '@/components/ToolCallCard';
 import { SkillsPanel } from '@/components/SkillsPanel';
 import { ProjectsPanel } from '@/components/ProjectsPanel';
 import { BroworkPanel } from '@/components/BroworkPanel';
+import { modelRouteLabel, normalizePendingPermissions, normalizePendingQuestions, readableArtifact } from '@/lib/experience-interactions';
 import { 
   Settings as SettingsIcon, 
   Send, 
@@ -25,6 +27,14 @@ import {
   FolderKanban,
   Users
 } from 'lucide-react';
+
+function exactError(error: unknown): string {
+  if (error instanceof ApiError) {
+    if (typeof error.payload === 'string') return error.payload;
+    try { return JSON.stringify(error.payload, null, 2); } catch { return error.message; }
+  }
+  return error instanceof Error ? error.message : String(error);
+}
 
 export default function App() {
   const api = useApi();
@@ -43,6 +53,12 @@ export default function App() {
   const [showProjects, setShowProjects] = useState(false);
   const [showBrowork, setShowBrowork] = useState(false);
   const [draftDivergence, setDraftDivergence] = useState<{ local: string; remote: string } | null>(null);
+  const [portableContext, setPortableContext] = useState<{
+    active: ExperienceEnvelope['active']; modelRoute: ExperienceEnvelope['model_route']; selectedArtifactId: string | null; selectedView: string;
+    pendingQuestions: unknown[]; pendingPermissions: unknown[];
+  }>({ active: { project_id: null, session_id: null, run_id: null }, modelRoute: {}, selectedArtifactId: null, selectedView: '', pendingQuestions: [], pendingPermissions: [] });
+  const [artifactPanel, setArtifactPanel] = useState<{ id: string; view: string; loading: boolean; content?: string; error?: string } | null>(null);
+  const [interactionError, setInteractionError] = useState('');
   const [activeToolCalls, setActiveToolCalls] = useState<Array<{
     id: string;
     tool: string;
@@ -63,13 +79,14 @@ export default function App() {
   const publishQueueRef = useRef<Promise<void>>(Promise.resolve());
   const localDraftRef = useRef('');
   const lastSyncedDraftRef = useRef('');
+  const actionAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { currentSessionRef.current = currentSession; }, [currentSession]);
 
   const surfaceState = (envelope: ExperienceEnvelope) => ({
     surface_id: 'desktop',
     sdk_version: '1.0.0',
-    capabilities: ['coding-runs', 'drafts', 'experience-stream', 'transcript-restore'],
+    capabilities: ['artifacts', 'coding-runs', 'drafts', 'experience-stream', 'model-route-display', 'permissions', 'questions', 'selected-view', 'transcript-restore'],
     transcript_cursor: Number(envelope.surfaces.desktop?.transcript_cursor ?? envelope.transcript_cursor ?? 0),
     transcript_epoch: envelope.transcript_epoch,
     last_event_id: envelope.last_event_id,
@@ -131,6 +148,14 @@ export default function App() {
     if (!force && envelope.revision <= (envelopeRef.current?.revision ?? -1)) return;
     const priorRun = envelopeRef.current?.active.run_id;
     envelopeRef.current = envelope;
+    setPortableContext({
+      active: envelope.active,
+      modelRoute: envelope.model_route ?? {},
+      selectedArtifactId: envelope.selected_artifact_id,
+      selectedView: envelope.selected_view,
+      pendingQuestions: envelope.pending_questions ?? [],
+      pendingPermissions: envelope.pending_permissions ?? [],
+    });
     restoringRef.current = true;
     const generation = ++restoreGenerationRef.current;
     try {
@@ -175,6 +200,30 @@ export default function App() {
   const scrollToBottom = useCallback(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    actionAbortRef.current?.abort();
+    actionAbortRef.current = controller;
+    setInteractionError('');
+    return () => controller.abort();
+  }, [portableContext.active.session_id, portableContext.active.run_id]);
+
+  useEffect(() => {
+    const artifactId = portableContext.selectedArtifactId;
+    if (!artifactId) {
+      setArtifactPanel(null);
+      return;
+    }
+    const controller = new AbortController();
+    setArtifactPanel({ id: artifactId, view: portableContext.selectedView, loading: true });
+    void api.getArtifact(artifactId, controller.signal).then((content) => {
+      if (!controller.signal.aborted) setArtifactPanel({ id: artifactId, view: portableContext.selectedView, loading: false, content: readableArtifact(content) });
+    }).catch((error) => {
+      if (!controller.signal.aborted) setArtifactPanel({ id: artifactId, view: portableContext.selectedView, loading: false, error: exactError(error) });
+    });
+    return () => controller.abort();
+  }, [api.getArtifact, portableContext.selectedArtifactId, portableContext.selectedView, portableContext.active.run_id]);
 
   useEffect(() => {
     scrollToBottom();
@@ -406,6 +455,38 @@ export default function App() {
     await publishExperience({ composer_draft: local });
   };
 
+  const answerPendingQuestion = async (requestId: string, answers: string[][]) => {
+    const { session_id: sessionId, run_id: runId } = portableContext.active;
+    if (!sessionId || !runId) {
+      setInteractionError('Active session and run are required to answer this question.');
+      return;
+    }
+    const signal = actionAbortRef.current?.signal;
+    setInteractionError('');
+    try {
+      await api.answerQuestion(sessionId, runId, requestId, answers, signal);
+      if (!signal?.aborted) await applyEnvelope(await api.getExperience('primary', signal), true);
+    } catch (error) {
+      if (!signal?.aborted) setInteractionError(exactError(error));
+    }
+  };
+
+  const answerPendingPermission = async (requestId: string, reply: 'once' | 'always' | 'reject') => {
+    const { session_id: sessionId, run_id: runId } = portableContext.active;
+    if (!sessionId || !runId) {
+      setInteractionError('Active session and run are required to answer this permission.');
+      return;
+    }
+    const signal = actionAbortRef.current?.signal;
+    setInteractionError('');
+    try {
+      await api.answerPermission(sessionId, runId, requestId, reply, signal);
+      if (!signal?.aborted) await applyEnvelope(await api.getExperience('primary', signal), true);
+    } catch (error) {
+      if (!signal?.aborted) setInteractionError(exactError(error));
+    }
+  };
+
   return (
     <div className="h-screen flex bg-slate-900 text-slate-100">
       {/* Sidebar */}
@@ -426,6 +507,9 @@ export default function App() {
             <h1 className="text-lg font-semibold">Floyd</h1>
             <span className="text-sm text-slate-400">
               {currentSession?.title || 'New Chat'}
+            </span>
+            <span className="rounded border border-slate-700 bg-slate-800 px-2 py-1 text-xs text-slate-300" title="Core model route">
+              {modelRouteLabel(portableContext.modelRoute)}
             </span>
           </div>
           
@@ -478,6 +562,16 @@ export default function App() {
             </button>
           </div>
         </header>
+
+        <ExperiencePanels
+          artifact={artifactPanel}
+          questions={normalizePendingQuestions(portableContext.pendingQuestions)}
+          permissions={normalizePendingPermissions(portableContext.pendingPermissions)}
+          interactionError={interactionError}
+          disabled={!portableContext.active.session_id || !portableContext.active.run_id}
+          onAnswer={answerPendingQuestion}
+          onPermission={answerPendingPermission}
+        />
 
         {/* Messages */}
         <div className="flex-1 overflow-y-auto p-4 space-y-4">

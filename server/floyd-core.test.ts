@@ -34,6 +34,35 @@ describe('FloydCoreBridge', () => {
     }
   });
 
+  it('keeps artifact and run-scoped interaction authorization in the server-side SDK', async () => {
+    const seen: Array<{ path: string; authorization: string | null; body: unknown }> = [];
+    const bridge = new FloydCoreBridge({
+      baseUrl: 'http://127.0.0.1:41414', token: 'private-loopback-token',
+      fetch: async (input, init) => {
+        const request = new Request(input, init);
+        seen.push({
+          path: new URL(request.url).pathname,
+          authorization: request.headers.get('authorization'),
+          body: request.method === 'GET' ? null : await request.json(),
+        });
+        return request.method === 'GET' ? new Response('artifact text') : Response.json({ accepted: true });
+      },
+    });
+
+    await bridge.client.artifactById('artifact/1');
+    await bridge.client.answer('session-1', 'question-1', [['yes']], 'floyd-desktop', undefined, 'run-1');
+    await bridge.client.permission('session-1', 'permission-1', 'once', 'floyd-desktop', undefined, 'run-1');
+
+    expect(seen.map((item) => item.authorization)).toEqual([
+      'Bearer private-loopback-token', 'Bearer private-loopback-token', 'Bearer private-loopback-token',
+    ]);
+    expect(seen).toMatchObject([
+      { path: '/api/artifacts/artifact%2F1', body: null },
+      { path: '/api/sessions/session-1/steer', body: { type: 'answer', request_id: 'question-1', run_id: 'run-1' } },
+      { path: '/api/sessions/session-1/steer', body: { type: 'permission', request_id: 'permission-1', reply: 'once', run_id: 'run-1' } },
+    ]);
+  });
+
   it('cancels the Core response reader when the consumer stops streaming', async () => {
     let cancelled = false;
     const body = new ReadableStream<Uint8Array>({

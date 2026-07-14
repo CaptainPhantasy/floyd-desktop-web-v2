@@ -237,11 +237,26 @@ export function useApi() {
     body: '{}',
   }), [fetchJson]);
 
-  const getExperience = useCallback((id = 'primary') => fetchJson<ExperienceEnvelope>(`/core/experience/${encodeURIComponent(id)}`), [fetchJson]);
+  const getExperience = useCallback((id = 'primary', signal?: AbortSignal) => fetchJson<ExperienceEnvelope>(`/core/experience/${encodeURIComponent(id)}`, { signal }), [fetchJson]);
 
   const updateExperience = useCallback((id: string, patch: Record<string, unknown>) => fetchJson<ExperienceEnvelope>(`/core/experience/${encodeURIComponent(id)}`, {
     method: 'PATCH',
     body: JSON.stringify(patch),
+  }), [fetchJson]);
+
+  const getArtifact = useCallback(async (artifactId: string, signal?: AbortSignal): Promise<unknown> => {
+    const response = await fetch(`${API_BASE}/core/artifacts/${encodeURIComponent(artifactId)}`, { signal });
+    const payload = await responsePayload(response);
+    if (!response.ok) throw new ApiError(response.status, payload);
+    return payload;
+  }, []);
+
+  const answerQuestion = useCallback((sessionId: string, runId: string, requestId: string, answers: string[][], signal?: AbortSignal) => fetchJson<Record<string, unknown>>(`/core/sessions/${encodeURIComponent(sessionId)}/answer`, {
+    method: 'POST', signal, body: JSON.stringify({ runId, requestId, answers }),
+  }), [fetchJson]);
+
+  const answerPermission = useCallback((sessionId: string, runId: string, requestId: string, reply: 'once' | 'always' | 'reject', signal?: AbortSignal) => fetchJson<Record<string, unknown>>(`/core/sessions/${encodeURIComponent(sessionId)}/permission`, {
+    method: 'POST', signal, body: JSON.stringify({ runId, requestId, reply }),
   }), [fetchJson]);
 
   const watchExperience = useCallback(async (
@@ -285,6 +300,9 @@ export function useApi() {
     negotiateExperience,
     getExperience,
     updateExperience,
+    getArtifact,
+    answerQuestion,
+    answerPermission,
     watchExperience,
     restoreTranscript,
   };

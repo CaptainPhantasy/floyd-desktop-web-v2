@@ -66,9 +66,22 @@ export class FloydClient {
   run(runId, signal) {
     return this.request("GET", `/api/runs/${encodeURIComponent(runId)}`, undefined, signal);
   }
+  artifactById(artifactId, signal) {
+    return this.request("GET", `/api/artifacts/${encodeURIComponent(artifactId)}`, undefined, signal);
+  }
   steer(sessionId, text, actor, signal) {
     return this.request("POST", `/api/sessions/${encodeURIComponent(sessionId)}/steer`, {
       type: "steer", text, actor,
+    }, signal);
+  }
+  answer(sessionId, requestId, answers, actor, signal, runId) {
+    return this.request("POST", `/api/sessions/${encodeURIComponent(sessionId)}/steer`, {
+      type: "answer", request_id: requestId, answers, actor, ...(runId ? { run_id: runId } : {}),
+    }, signal);
+  }
+  permission(sessionId, requestId, reply, actor, signal, runId) {
+    return this.request("POST", `/api/sessions/${encodeURIComponent(sessionId)}/steer`, {
+      type: "permission", request_id: requestId, reply, actor, ...(runId ? { run_id: runId } : {}),
     }, signal);
   }
 

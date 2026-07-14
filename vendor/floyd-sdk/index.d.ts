@@ -32,6 +32,7 @@ export interface ExperienceEnvelope {
 }
 
 export class FloydApiError extends Error {
+  constructor(method: string, path: string, status: number, payload: unknown);
   readonly status: number;
   readonly method: string;
   readonly path: string;
@@ -49,6 +50,9 @@ export class FloydClient {
   watchExperience(envelopeId?: string, options?: { lastEventId?: string; signal?: AbortSignal }): AsyncGenerator<FloydStreamEvent<ExperienceEnvelope>>;
   submit(projectId: string, goal: string, signal?: AbortSignal): Promise<{ run_id: string; duplicate: boolean }>;
   run(runId: string, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  artifactById(artifactId: string, signal?: AbortSignal): Promise<unknown>;
   steer(sessionId: string, text: string, actor: string, signal?: AbortSignal): Promise<Record<string, unknown>>;
+  answer(sessionId: string, requestId: string, answers: string[][], actor: string, signal?: AbortSignal, runId?: string): Promise<Record<string, unknown>>;
+  permission(sessionId: string, requestId: string, reply: "once" | "always" | "reject", actor: string, signal?: AbortSignal, runId?: string): Promise<Record<string, unknown>>;
   attachSession(sessionId: string, actor: string, options?: { lastEventId?: string; signal?: AbortSignal; runId?: string }): AsyncGenerator<FloydStreamEvent>;
 }

@@ -22,6 +22,7 @@ import { WebSocketMCPServer } from './ws-mcp-server.js';
 import { FloydApiError, FloydCoreBridge } from './floyd-core.js';
 import { registerExperienceRoutes } from './experience-adapter.js';
 import { publishCreatedRunContext } from './experience-publication.js';
+import { registerCoreActionRoutes } from './core-actions.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -143,6 +144,7 @@ let settings: Settings = {
 const sessions: Map<string, Session> = new Map();
 const floydCore = new FloydCoreBridge();
 registerExperienceRoutes(app, floydCore);
+registerCoreActionRoutes(app, floydCore);
 
 // Initialize data directory
 async function initDataDir() {

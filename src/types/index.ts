@@ -20,9 +20,12 @@ export interface ExperienceEnvelope {
   id: string;
   revision: number;
   active: { project_id: string | null; session_id: string | null; run_id: string | null };
+  model_route: { provider?: string | null; model?: string | null; [key: string]: unknown };
   transcript_cursor: number;
   transcript_epoch: string | null;
   last_event_id: string | null;
+  pending_questions: unknown[];
+  pending_permissions: unknown[];
   composer_draft: string;
   selected_view: string;
   selected_artifact_id: string | null;

@@ -45,6 +45,9 @@ describe('desktop experience adapter', () => {
     expect(await publish.json()).toEqual({ error: 'revision_conflict', envelope: { revision: 8 } });
     expect(seen.map((item) => item.authorization)).toEqual(['Bearer private-token', 'Bearer private-token']);
     expect(seen[0]?.body).toMatchObject({ surface_id: 'desktop', supported_envelope_versions: ['1.0.0'] });
+    expect(seen[0]?.body).toMatchObject({ capabilities: expect.arrayContaining([
+      'artifacts', 'model-route-display', 'permissions', 'questions', 'selected-view',
+    ]) });
   });
 
   it('relays the durable transcript snapshot and cancels Core when the browser stops reading', async () => {

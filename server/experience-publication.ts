@@ -26,7 +26,7 @@ export async function publishCreatedRunContext(client: ExperienceClient, binding
         surface: {
           surface_id: 'desktop',
           sdk_version: '1.0.0',
-          capabilities: ['coding-runs', 'drafts', 'experience-stream', 'transcript-restore'],
+          capabilities: ['artifacts', 'coding-runs', 'drafts', 'experience-stream', 'model-route-display', 'permissions', 'questions', 'selected-view', 'transcript-restore'],
           transcript_cursor: Number(envelope.surfaces?.desktop?.transcript_cursor ?? envelope.transcript_cursor ?? 0),
           transcript_epoch: envelope.transcript_epoch ?? null,
           last_event_id: envelope.last_event_id ?? null,
