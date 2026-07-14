@@ -24,6 +24,7 @@ import { registerExperienceRoutes } from './experience-adapter.js';
 import { publishCreatedRunContext } from './experience-publication.js';
 import { attachRunWithReconnect } from './core-stream.js';
 import { registerCoreActionRoutes } from './core-actions.js';
+import { withDesktopSurfaceIdentity } from './surface-identity.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -264,12 +265,12 @@ function getClient(): Anthropic | OpenAI | null {
 
 // Health check
 app.get('/api/health', (req, res) => {
-  res.json({ 
+  res.json(withDesktopSurfaceIdentity({
     status: 'ok', 
     hasApiKey: !!settings.apiKey,
     provider: settings.provider,
     model: settings.model 
-  });
+  }));
 });
 
 // Floyd Core is the only authority for coding runs. Provider credentials and
