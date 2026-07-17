@@ -9,8 +9,9 @@ import OpenAI from 'openai';
 import { randomUUID } from 'node:crypto';
 import { ToolExecutor } from './tool-executor.js';
 import { BUILTIN_TOOLS } from './mcp-client.js';
+import { Provider, sdkBaseURLOption } from './provider-config.js';
 
-export type Provider = 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
+export type { Provider } from './provider-config.js';
 
 export type AgentStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancelled';
 
@@ -56,8 +57,9 @@ export class BroworkManager {
   private config: BroworkConfig = DEFAULT_CONFIG;
   private toolExecutor: ToolExecutor;
   private apiKey: string = '';
-  private model: string = 'claude-sonnet-4-5-20250514';
+  private model: string = 'claude-sonnet-4-6';
   private provider: Provider = 'anthropic';
+  private baseURL?: string;
   private onUpdate?: (task: AgentTask) => void;
 
   constructor(toolExecutor: ToolExecutor) {
@@ -65,7 +67,7 @@ export class BroworkManager {
   }
 
   setApiKey(key: string) { this.apiKey = key; }
-  setBaseURL(url: string | undefined) { /* no-op for now unless we add support */ }
+  setBaseURL(url: string | undefined) { this.baseURL = url; }
   setModel(model: string) { this.model = model; }
   setProvider(provider: Provider) { this.provider = provider; }
   setConfig(config: Partial<BroworkConfig>) { this.config = { ...this.config, ...config }; }
@@ -202,7 +204,10 @@ Work step by step and complete the task.`;
   }
 
   private async runAnthropicAgent(task: AgentTask, systemPrompt: string): Promise<void> {
-    const client = new Anthropic({ apiKey: this.apiKey });
+    const client = new Anthropic({
+      apiKey: this.apiKey,
+      ...sdkBaseURLOption(this.provider, this.baseURL),
+    });
     const tools = BUILTIN_TOOLS.map(tool => ({
       name: tool.name,
       description: tool.description,
@@ -282,7 +287,7 @@ Work step by step and complete the task.`;
   private async runOpenAIAgent(task: AgentTask, systemPrompt: string): Promise<void> {
     const client = new OpenAI({ 
       apiKey: this.apiKey,
-      baseURL: this.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+      ...sdkBaseURLOption(this.provider, this.baseURL),
     });
     const tools = BUILTIN_TOOLS.map(tool => ({
       type: 'function' as const,
