@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "baseBranch": "feat/floyd-core-runtime",
+  "remote": "origin",
+  "publish": true,
+  "gates": [
+    { "name": "install", "command": ["npm", "ci"], "required": true },
+    { "name": "tests", "command": ["npm", "run", "test:run"], "required": true },
+    { "name": "build", "command": ["npm", "run", "build"], "required": true },
+    { "name": "provider-runtime", "command": ["node", "scripts/provider-routing-smoke.mjs"], "required": true },
+    { "name": "audit", "command": ["npm", "audit", "--audit-level=high"], "required": true }
+  ],
+  "include": [
+    ".proofline.json",
+    "package.json",
+    "package-lock.json",
+    "server/index.ts",
+    "server/browork-manager.ts",
+    "server/provider-config.ts",
+    "server/provider-config.test.ts",
+    "scripts/provider-routing-smoke.mjs",
+    "tsconfig.server.json",
+    "vitest.config.ts"
+  ],
+  "deny": [
+    ".env",
+    ".env.*",
+    "*.pem",
+    "*.key",
+    "*.p12",
+    ".git/**",
+    ".planning/**",
+    ".claude/**",
+    ".codex/**",
+    ".agents/**",
+    ".omp/**",
+    ".harness/**",
+    ".floyd-data/**",
+    "node_modules/**",
+    "dist/**",
+    "dist-server/**",
+    "coverage/**",
+    "__pycache__/**"
+  ]
+}

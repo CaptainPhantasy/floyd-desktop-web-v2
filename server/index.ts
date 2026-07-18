@@ -25,6 +25,13 @@ import { publishCreatedRunContext } from './experience-publication.js';
 import { attachRunWithReconnect } from './core-stream.js';
 import { registerCoreActionRoutes } from './core-actions.js';
 import { withDesktopSurfaceIdentity } from './surface-identity.js';
+import {
+  isProvider,
+  Provider,
+  resolveProviderBaseURL,
+  resolveSettingsBaseURL,
+  sdkBaseURLOption,
+} from './provider-config.js';
 
 // Load .env.local
 config({ path: '.env.local' });
@@ -80,8 +87,6 @@ interface Session {
   floydProjectId?: string;
 }
 
-type Provider = 'anthropic' | 'openai' | 'glm' | 'anthropic-compatible';
-
 interface Settings {
   provider: Provider;
   apiKey: string;
@@ -94,35 +99,31 @@ interface Settings {
 // Provider configurations
 const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
   anthropic: [
-    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet (Recommended)' },
-    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus (Most Capable)' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku (Fast)' },
+    { id: 'claude-opus-4-8', name: 'Claude Opus 4.8 (Most Capable)' },
+    { id: 'claude-sonnet-5', name: 'Claude Sonnet 5' },
+    { id: 'claude-sonnet-4-6', name: 'Claude Sonnet 4.6 (Fast)' },
+    { id: 'claude-haiku-4-5-20251001', name: 'Claude Haiku 4.5 (Fastest)' },
   ],
   'anthropic-compatible': [
+    { id: 'glm-5.1', name: 'GLM-5.1 (Recommended)' },
+    { id: 'glm-5', name: 'GLM-5' },
+    { id: 'glm-5-turbo', name: 'GLM-5 Turbo' },
     { id: 'glm-4.7', name: 'GLM-4.7 (Standard, Complex Tasks)' },
     { id: 'glm-4.5-air', name: 'GLM-4.5 Air (Lightweight, Faster)' },
-    { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
-    { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
-    { id: 'glm-4', name: 'GLM-4 (Standard)' },
-    { id: 'glm-4-air', name: 'GLM-4 Air (Fast)' },
-    { id: 'glm-4-airx', name: 'GLM-4 AirX (Faster)' },
-    { id: 'glm-4-long', name: 'GLM-4 Long (128K Context)' },
-    { id: 'glm-4-flash', name: 'GLM-4 Flash (Cheapest)' },
-    { id: 'claude-sonnet-4-5-20250514', name: 'Claude 4.5 Sonnet' },
-    { id: 'claude-opus-4-5-20250514', name: 'Claude 4.5 Opus' },
-    { id: 'claude-sonnet-4-20250514', name: 'Claude 4 Sonnet' },
-    { id: 'claude-3-5-haiku-20241022', name: 'Claude 3.5 Haiku' },
     { id: 'custom-model', name: 'Custom Model (specify in settings)' },
   ],
   openai: [
-    { id: 'gpt-4o', name: 'GPT-4o (Recommended)' },
-    { id: 'gpt-4o-mini', name: 'GPT-4o Mini (Fast & Cheap)' },
-    { id: 'gpt-4-turbo', name: 'GPT-4 Turbo' },
-    { id: 'gpt-4', name: 'GPT-4' },
-    { id: 'gpt-3.5-turbo', name: 'GPT-3.5 Turbo (Cheapest)' },
+    { id: 'gpt-4.1', name: 'GPT-4.1 (Recommended for Chat Completions)' },
+    { id: 'gpt-4.1-mini', name: 'GPT-4.1 Mini (Fast)' },
+    { id: 'gpt-5', name: 'GPT-5' },
+    { id: 'gpt-5.1', name: 'GPT-5.1 (Reasoning)' },
+    { id: 'gpt-5-mini', name: 'GPT-5 Mini (Fast)' },
+    { id: 'gpt-5-nano', name: 'GPT-5 Nano (Economy)' },
   ],
   glm: [
+    { id: 'glm-5.1', name: 'GLM-5.1 (Recommended)' },
+    { id: 'glm-5', name: 'GLM-5' },
+    { id: 'glm-5-turbo', name: 'GLM-5 Turbo' },
     { id: 'glm-4-plus', name: 'GLM-4 Plus (Most Capable)' },
     { id: 'glm-4-0520', name: 'GLM-4-0520 (Recommended)' },
     { id: 'glm-4', name: 'GLM-4 (Standard)' },
@@ -137,7 +138,7 @@ const PROVIDER_MODELS: Record<Provider, Array<{ id: string; name: string }>> = {
 let settings: Settings = {
   provider: 'anthropic-compatible',
   apiKey: process.env.GLM_API_KEY || process.env.ANTHROPIC_API_KEY || process.env.OPENAI_API_KEY || '',
-  model: 'glm-4.7',
+  model: 'glm-5.1',
   maxTokens: 16384,
   baseURL: 'https://api.z.ai/api/anthropic',
 };
@@ -157,7 +158,12 @@ async function initDataDir() {
     try {
       const settingsData = await fs.readFile(path.join(DATA_DIR, 'settings.json'), 'utf-8');
       const saved = JSON.parse(settingsData);
-      settings = { ...settings, ...saved };
+      const provider = isProvider(saved.provider) ? saved.provider : settings.provider;
+      settings = { ...settings, ...saved, provider };
+      settings.baseURL = resolveProviderBaseURL(
+        provider,
+        provider === 'anthropic-compatible' ? saved.baseURL : undefined,
+      );
       console.log('[Server] Loaded settings from disk');
     } catch {
       console.log('[Server] No existing settings, using defaults');
@@ -238,16 +244,17 @@ function getAnthropicClient(): Anthropic | null {
   }
   return new Anthropic({
     apiKey: settings.apiKey,
-    baseURL: settings.baseURL,
+    ...sdkBaseURLOption(settings.provider, settings.baseURL),
   });
 }
 
 function getOpenAIClient(): OpenAI | null {
-  if (!settings.apiKey || settings.provider !== 'openai') {
+  if (!settings.apiKey || (settings.provider !== 'openai' && settings.provider !== 'glm')) {
     return null;
   }
   return new OpenAI({
     apiKey: settings.apiKey,
+    ...sdkBaseURLOption(settings.provider, settings.baseURL),
   });
 }
 
@@ -325,12 +332,24 @@ app.get('/api/settings', (req, res) => {
 app.post('/api/settings', async (req, res) => {
   const { provider, apiKey, model, systemPrompt, maxTokens, baseURL } = req.body;
   
+  if (provider !== undefined && !isProvider(provider)) {
+    return res.status(400).json({ success: false, error: 'Unsupported provider' });
+  }
+  if (baseURL !== undefined && typeof baseURL !== 'string') {
+    return res.status(400).json({ success: false, error: 'baseURL must be a string' });
+  }
+  const previousProvider = settings.provider;
   if (provider !== undefined) settings.provider = provider;
   if (apiKey !== undefined) settings.apiKey = apiKey;
   if (model !== undefined) settings.model = model;
   if (systemPrompt !== undefined) settings.systemPrompt = systemPrompt;
   if (maxTokens !== undefined) settings.maxTokens = maxTokens;
-  if (baseURL !== undefined) settings.baseURL = baseURL;
+  settings.baseURL = resolveSettingsBaseURL(
+    previousProvider,
+    settings.provider,
+    settings.baseURL,
+    baseURL,
+  );
   
   // Update browork with new settings
   if (settings.apiKey) {
@@ -355,9 +374,9 @@ app.post('/api/test-key', async (req, res) => {
   
   try {
     if (provider === 'openai') {
-      const client = new OpenAI({ apiKey });
+      const client = new OpenAI({ apiKey, ...sdkBaseURLOption('openai') });
       const response = await client.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: 'gpt-4.1-mini',
         max_tokens: 10,
         messages: [{ role: 'user', content: 'Say "ok"' }],
       });
@@ -371,10 +390,10 @@ app.post('/api/test-key', async (req, res) => {
       // GLM uses OpenAI-compatible API with different base URL
       const client = new OpenAI({ 
         apiKey,
-        baseURL: 'https://open.bigmodel.cn/api/paas/v4'
+        ...sdkBaseURLOption('glm'),
       });
       const response = await client.chat.completions.create({
-        model: 'glm-4',
+        model: 'glm-5',
         max_tokens: 10,
         messages: [{ role: 'user', content: 'Say "ok"' }],
       });
@@ -388,10 +407,10 @@ app.post('/api/test-key', async (req, res) => {
       // Test with Z.ai endpoint using Anthropic SDK
       const client = new Anthropic({ 
         apiKey,
-        baseURL: 'https://api.z.ai/api/anthropic'
+        ...sdkBaseURLOption('anthropic-compatible', settings.baseURL),
       });
       const response = await client.messages.create({
-        model: 'glm-4.7',
+        model: 'glm-5.1',
         max_tokens: 10,
         messages: [{ role: 'user', content: 'Say "ok"' }],
       });
@@ -402,9 +421,9 @@ app.post('/api/test-key', async (req, res) => {
         message: 'Z.ai API key is valid'
       });
     } else {
-      const client = new Anthropic({ apiKey });
+      const client = new Anthropic({ apiKey, ...sdkBaseURLOption('anthropic') });
       const response = await client.messages.create({
-        model: 'claude-sonnet-4-5-20250514',
+        model: 'claude-sonnet-4-6',
         max_tokens: 10,
         messages: [{ role: 'user', content: 'Say "ok"' }],
       });
@@ -844,7 +863,7 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
       // OpenAI/GLM flow
       const client = new OpenAI({ 
         apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        ...sdkBaseURLOption(settings.provider, settings.baseURL),
       });
 
       const response = await client.chat.completions.create({
@@ -868,7 +887,7 @@ app.post('/api/sessions/:id/regenerate', async (req, res) => {
       // Anthropic-compatible flow
       const client = new Anthropic({ 
         apiKey: settings.apiKey,
-        baseURL: settings.baseURL,
+        ...sdkBaseURLOption(settings.provider, settings.baseURL),
       });
 
       const response = await client.messages.create({
@@ -989,7 +1008,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
     if (settings.provider === 'openai' || settings.provider === 'glm') {
       const openaiClient = new OpenAI({ 
         apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        ...sdkBaseURLOption(settings.provider, settings.baseURL),
       });
       
       const response = await openaiClient.chat.completions.create({
@@ -1024,7 +1043,7 @@ app.post('/api/sessions/:id/continue', async (req, res) => {
       // Anthropic-compatible flow
       const anthropicClient = new Anthropic({ 
         apiKey: settings.apiKey,
-        baseURL: settings.baseURL,
+        ...sdkBaseURLOption(settings.provider, settings.baseURL),
       });
       
       const response = await anthropicClient.messages.create({
@@ -1404,7 +1423,7 @@ app.post('/api/chat/stream', async (req, res) => {
       // OpenAI-compatible flow (OpenAI and GLM)
       const client = new OpenAI({ 
         apiKey: settings.apiKey,
-        baseURL: settings.provider === 'glm' ? 'https://open.bigmodel.cn/api/paas/v4' : undefined,
+        ...sdkBaseURLOption(settings.provider, settings.baseURL),
       });
       const openaiTools = enableTools ? getOpenAITools() : undefined;
       
@@ -1480,7 +1499,7 @@ app.post('/api/chat/stream', async (req, res) => {
       // Anthropic-compatible flow (uses Anthropic client with custom baseURL)
       const client = new Anthropic({ 
         apiKey: settings.apiKey,
-        baseURL: settings.baseURL,
+        ...sdkBaseURLOption(settings.provider, settings.baseURL),
       });
       const anthropicTools = enableTools ? getAnthropicTools() : undefined;
       
